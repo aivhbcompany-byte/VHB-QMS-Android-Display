@@ -1,0 +1,35 @@
+name: Build VHB QMS Android Display 2.2.0 GeckoView
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+permissions:
+  contents: read
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Build GeckoView ARM64 debug APK
+        run: gradle :app:assembleDebug -PvhbGeckoArtifact=geckoview-omni-arm64-v8a --stacktrace
+      - name: Package release artifact
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.apk
+          sha256sum VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.apk > VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.sha256
+          unzip -l VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.apk | grep -E 'lib/arm64-v8a/.+\.so' | head -20
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VHB-QMS-Android-Display-2.2.0-GeckoView-ARM64
+          path: |
+            VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.apk
+            VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.sha256
+          if-no-files-found: error
+          retention-days: 7

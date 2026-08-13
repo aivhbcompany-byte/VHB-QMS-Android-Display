@@ -1,0 +1,27 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'vn.com.vhb.qmsdisplay'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'vn.com.vhb.qmsdisplay.r2'
+        minSdk 28
+        targetSdk 36
+        versionCode 2020000
+        versionName '2.2.0'
+    }
+    buildTypes {
+        release { minifyEnabled false; shrinkResources false }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+def geckoVersion = '153.0.20260810162159'
+def geckoArtifact = project.findProperty('vhbGeckoArtifact') ?: 'geckoview-omni-arm64-v8a'
+
+dependencies {
+    implementation "org.mozilla.geckoview:${geckoArtifact}:${geckoVersion}"
+}
