@@ -1,4 +1,4 @@
-name: Build VHB QMS Android Display 2.2.1 Compatibility
+name: Build VHB QMS Android Display 2.2.3 HOME Launcher
 on:
   workflow_dispatch:
   push:
@@ -28,18 +28,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.0'
-      - name: Build GeckoView ${{ matrix.suffix }} debug APK
+      - name: Build GeckoView ${{ matrix.suffix }} HOME Launcher APK
         run: gradle :app:assembleDebug -PvhbGeckoArtifact=${{ matrix.artifact }} --stacktrace
       - name: Package artifact
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.apk
-          sha256sum VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.apk > VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.sha256
-          unzip -l VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.apk | grep -E 'lib/(arm64-v8a|armeabi-v7a)/.+\.so' | head -30
+          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.2.3_HOME_${{ matrix.suffix }}.apk
+          sha256sum VHB_QMS_Android_Display_2.2.3_HOME_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.2.3_HOME_${{ matrix.suffix }}.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: VHB-QMS-Android-Display-2.2.1-GeckoView-${{ matrix.suffix }}-SIDE-BY-SIDE
+          name: VHB-QMS-Android-Display-2.2.3-HOME-${{ matrix.suffix }}
           path: |
-            VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.apk
-            VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.sha256
+            VHB_QMS_Android_Display_2.2.3_HOME_${{ matrix.suffix }}.apk
+            VHB_QMS_Android_Display_2.2.3_HOME_${{ matrix.suffix }}.sha256
           if-no-files-found: error
           retention-days: 7

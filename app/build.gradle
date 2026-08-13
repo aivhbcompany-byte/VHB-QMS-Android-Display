@@ -7,8 +7,8 @@ android {
         applicationId 'vn.com.vhb.qmsdisplay.gecko'
         minSdk 28
         targetSdk 36
-        versionCode 2020200
-        versionName '2.2.2'
+        versionCode 2020300
+        versionName '2.2.3'
     }
     buildTypes {
         release { minifyEnabled false; shrinkResources false }
