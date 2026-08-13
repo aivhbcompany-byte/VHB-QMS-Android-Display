@@ -1,0 +1,1 @@
+Trigger GeckoView ARM64 build for VHB QMS Android Display 2.2.0.
