@@ -7,8 +7,26 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-    <application android:allowBackup="false" android:usesCleartextTraffic="true" android:networkSecurityConfig="@xml/network_security_config" android:hardwareAccelerated="true" android:largeHeap="true" android:label="VHB QMS Gecko 2.2.1" android:theme="@style/AppTheme" android:enableOnBackInvokedCallback="false">
-        <activity android:name="vn.com.vhb.qmsdisplay.MainActivity" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" android:excludeFromRecents="true" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape" android:windowSoftInputMode="stateUnspecified|adjustResize">
+    <application
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true"
+        android:label="VHB QMS Display"
+        android:icon="@drawable/vhb_app_icon"
+        android:roundIcon="@drawable/vhb_app_icon"
+        android:banner="@drawable/vhb_tv_banner"
+        android:theme="@style/AppTheme"
+        android:enableOnBackInvokedCallback="false">
+        <activity
+            android:name="vn.com.vhb.qmsdisplay.MainActivity"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:windowSoftInputMode="stateUnspecified|adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

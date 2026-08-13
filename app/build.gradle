@@ -4,13 +4,11 @@ android {
     namespace 'vn.com.vhb.qmsdisplay'
     compileSdk 36
     defaultConfig {
-        // 2.2.1 compatibility build uses a separate applicationId so it can be
-        // installed alongside any old VHB build signed with a different key.
         applicationId 'vn.com.vhb.qmsdisplay.gecko'
         minSdk 28
         targetSdk 36
-        versionCode 2020100
-        versionName '2.2.1'
+        versionCode 2020200
+        versionName '2.2.2'
     }
     buildTypes {
         release { minifyEnabled false; shrinkResources false }
