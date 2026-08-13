@@ -1,4 +1,4 @@
-name: Build VHB QMS Android Display 2.2.0 GeckoView
+name: Build VHB QMS Android Display 2.2.1 Compatibility
 on:
   workflow_dispatch:
   push:
@@ -6,7 +6,17 @@ on:
 permissions:
   contents: read
 jobs:
-  build-arm64:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            artifact: geckoview-omni-arm64-v8a
+            suffix: ARM64
+          - abi: armeabi-v7a
+            artifact: geckoview-omni-armeabi-v7a
+            suffix: ARM32
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -18,18 +28,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.0'
-      - name: Build GeckoView ARM64 debug APK
-        run: gradle :app:assembleDebug -PvhbGeckoArtifact=geckoview-omni-arm64-v8a --stacktrace
-      - name: Package release artifact
+      - name: Build GeckoView ${{ matrix.suffix }} debug APK
+        run: gradle :app:assembleDebug -PvhbGeckoArtifact=${{ matrix.artifact }} --stacktrace
+      - name: Package artifact
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.apk
-          sha256sum VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.apk > VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.sha256
-          unzip -l VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.apk | grep -E 'lib/arm64-v8a/.+\.so' | head -20
+          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.apk
+          sha256sum VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.apk > VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.sha256
+          unzip -l VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.apk | grep -E 'lib/(arm64-v8a|armeabi-v7a)/.+\.so' | head -30
       - uses: actions/upload-artifact@v4
         with:
-          name: VHB-QMS-Android-Display-2.2.0-GeckoView-ARM64
+          name: VHB-QMS-Android-Display-2.2.1-GeckoView-${{ matrix.suffix }}-SIDE-BY-SIDE
           path: |
-            VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.apk
-            VHB_QMS_Android_Display_2.2.0_GeckoView_ARM64.sha256
+            VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.apk
+            VHB_QMS_Android_Display_2.2.1_GeckoView_${{ matrix.suffix }}_SIDE_BY_SIDE.sha256
           if-no-files-found: error
           retention-days: 7
