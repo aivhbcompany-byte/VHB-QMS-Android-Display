@@ -6,6 +6,8 @@ gradle_path = Path('app/build.gradle')
 src = java_path.read_text(encoding='utf-8')
 
 src = src.replace('import android.widget.LinearLayout;\n', 'import android.widget.LinearLayout;\nimport android.widget.ScrollView;\n')
+if 'import android.view.inputmethod.InputMethodManager;' not in src:
+    src = src.replace('import android.view.WindowManager;\n', 'import android.view.WindowManager;\nimport android.view.inputmethod.InputMethodManager;\n')
 src = src.replace('private static final String VERSION = "2.2.4";', 'private static final String VERSION = "2.2.5";')
 
 start = src.index('    private void showAdmin() {')
@@ -78,7 +80,6 @@ new_method = r'''    private void showAdmin() {
         box.addView(setHome);
         box.addView(settings);
 
-        // Chạm vùng trống bên trong form chỉ ẩn bàn phím, không đóng dialog.
         box.setOnTouchListener((v, event) -> {
             if (event != null && event.getAction() == MotionEvent.ACTION_DOWN) {
                 View focused = getCurrentFocus();
@@ -142,7 +143,6 @@ new_method = r'''    private void showAdmin() {
                 .setNegativeButton("Đóng", (dialog, which) -> hideKeyboard(url))
                 .create();
 
-        // Quan trọng: chạm vùng mờ ngoài dialog KHÔNG được đóng màn hình cấu hình.
         adminDialog.setCanceledOnTouchOutside(false);
         adminDialog.setCancelable(true);
         adminDialog.setOnShowListener(ignored -> {
@@ -171,6 +171,24 @@ new_method = r'''    private void showAdmin() {
 '''
 
 src = src[:start] + new_method + src[end:]
+
+if '    private void hideKeyboard(View anchor) {' not in src:
+    marker = '    @Override public boolean onKeyDown(int code, KeyEvent event) {'
+    helper = r'''    private void hideKeyboard(View anchor) {
+        try {
+            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                View target = anchor != null ? anchor : getWindow().getDecorView();
+                imm.hideSoftInputFromWindow(target.getWindowToken(), 0);
+            }
+        } catch (Throwable ignored) { }
+    }
+
+'''
+    if marker not in src:
+        raise RuntimeError('Cannot locate onKeyDown insertion marker')
+    src = src.replace(marker, helper + marker, 1)
+
 java_path.write_text(src, encoding='utf-8')
 
 gradle = gradle_path.read_text(encoding='utf-8')
