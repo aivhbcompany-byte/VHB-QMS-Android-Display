@@ -1,0 +1,84 @@
+diff --git a/app/build.gradle b/app/build.gradle
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -7,8 +7,8 @@ android {
+         applicationId 'vn.com.vhb.qmsdisplay.gecko'
+         minSdk 28
+         targetSdk 36
+-        versionCode 2020300
+-        versionName '2.2.3'
++        versionCode 2020400
++        versionName '2.2.4'
+     }
+     buildTypes {
+         release { minifyEnabled false; shrinkResources false }
+diff --git a/app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java b/app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+--- a/app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
++++ b/app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+@@ -8,6 +8,7 @@ import android.content.SharedPreferences;
+ import android.content.pm.PackageManager;
+ import android.content.pm.ResolveInfo;
+ import android.graphics.Color;
++import android.graphics.Rect;
+ import android.net.ConnectivityManager;
+ import android.net.Network;
+ import android.os.Build;
+@@ -17,10 +18,12 @@ import android.os.Looper;
+ import android.provider.Settings;
+ import android.text.InputType;
+ import android.view.Gravity;
+ import android.view.KeyEvent;
++import android.view.MotionEvent;
+ import android.view.View;
+ import android.view.WindowInsets;
+ import android.view.WindowInsetsController;
+ import android.view.WindowManager;
++import android.view.inputmethod.InputMethodManager;
+ import android.widget.Button;
+ import android.widget.CheckBox;
+ import android.widget.EditText;
+@@ -38,7 +41,7 @@ import org.mozilla.geckoview.WebRequestError;
+ 
+ public final class MainActivity extends Activity {
+-    private static final String VERSION = "2.2.3";
++    private static final String VERSION = "2.2.4";
+     private static final String PREFS = "vhb_qms_display_settings";
+     private static final long BACK_HOLD_MS = 1800L;
+     private static final long RETRY_MIN_MS = 2000L;
+@@ -525,6 +528,36 @@ public final class MainActivity extends Activity {
+         super.onDestroy();
+     }
+ 
++    @Override public boolean dispatchTouchEvent(MotionEvent event) {
++        if (event != null && event.getAction() == MotionEvent.ACTION_DOWN) {
++            View focused = getCurrentFocus();
++            if (focused instanceof EditText) {
++                Rect bounds = new Rect();
++                boolean visible = focused.getGlobalVisibleRect(bounds);
++                int x = Math.round(event.getRawX());
++                int y = Math.round(event.getRawY());
++
++                if (!visible || !bounds.contains(x, y)) {
++                    focused.clearFocus();
++                    hideKeyboard(focused);
++                }
++            }
++        }
++
++        // Không consume sự kiện: click vào nút bên dưới vẫn hoạt động sau khi bàn phím đóng.
++        return super.dispatchTouchEvent(event);
++    }
++
++    private void hideKeyboard(View anchor) {
++        try {
++            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
++            if (imm != null) {
++                View target = anchor != null ? anchor : getWindow().getDecorView();
++                imm.hideSoftInputFromWindow(target.getWindowToken(), 0);
++            }
++        } catch (Throwable ignored) { }
++    }
++
+     @Override public boolean onKeyDown(int code, KeyEvent event) {
+         if (code == KeyEvent.KEYCODE_BACK && event.getRepeatCount() == 0) {
+             backHeld = false;
