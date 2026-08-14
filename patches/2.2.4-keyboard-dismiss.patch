@@ -45,6 +45,15 @@ diff --git a/app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java b/app/src
      private static final String PREFS = "vhb_qms_display_settings";
      private static final long BACK_HOLD_MS = 1800L;
      private static final long RETRY_MIN_MS = 2000L;
+@@ -342,7 +345,7 @@ public final class MainActivity extends Activity {
+         box.addView(settings);
+ 
+         new AlertDialog.Builder(this)
+-                .setTitle("VHB QMS Display 2.2.3 • HOME Launcher")
++                .setTitle("VHB QMS Display 2.2.4 • HOME Launcher")
+                 .setView(box)
+                 .setPositiveButton("Lưu & mở", (dialog, which) -> {
+                     String normalized = normalize(url.getText().toString());
 @@ -525,6 +528,36 @@ public final class MainActivity extends Activity {
          super.onDestroy();
      }
