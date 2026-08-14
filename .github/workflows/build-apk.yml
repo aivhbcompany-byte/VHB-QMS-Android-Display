@@ -1,4 +1,4 @@
-name: Build VHB QMS Android Display 2.2.7 PANAPLAYBOX HOME
+name: Build VHB QMS Android Display 2.2.8 Fast Direct Boot
 on:
   workflow_dispatch:
   push:
@@ -36,17 +36,19 @@ jobs:
         run: python3 tools/apply_226.py
       - name: Apply 2.2.7 PANAPLAYBOX full-component HOME fix
         run: python3 tools/apply_227.py
-      - name: Build GeckoView ${{ matrix.suffix }} PANAPLAYBOX HOME APK
+      - name: Apply 2.2.8 Fast Direct Boot
+        run: python3 tools/apply_228.py
+      - name: Build GeckoView ${{ matrix.suffix }} Fast Direct Boot APK
         run: gradle :app:assembleDebug -PvhbGeckoArtifact=${{ matrix.artifact }} --stacktrace
       - name: Package artifact
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.2.7_PANAPLAYBOX_HOME_${{ matrix.suffix }}.apk
-          sha256sum VHB_QMS_Android_Display_2.2.7_PANAPLAYBOX_HOME_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.2.7_PANAPLAYBOX_HOME_${{ matrix.suffix }}.sha256
+          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.2.8_FAST_DIRECT_BOOT_${{ matrix.suffix }}.apk
+          sha256sum VHB_QMS_Android_Display_2.2.8_FAST_DIRECT_BOOT_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.2.8_FAST_DIRECT_BOOT_${{ matrix.suffix }}.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: VHB-QMS-Android-Display-2.2.7-PANAPLAYBOX-HOME-${{ matrix.suffix }}
+          name: VHB-QMS-Android-Display-2.2.8-FAST-DIRECT-BOOT-${{ matrix.suffix }}
           path: |
-            VHB_QMS_Android_Display_2.2.7_PANAPLAYBOX_HOME_${{ matrix.suffix }}.apk
-            VHB_QMS_Android_Display_2.2.7_PANAPLAYBOX_HOME_${{ matrix.suffix }}.sha256
+            VHB_QMS_Android_Display_2.2.8_FAST_DIRECT_BOOT_${{ matrix.suffix }}.apk
+            VHB_QMS_Android_Display_2.2.8_FAST_DIRECT_BOOT_${{ matrix.suffix }}.sha256
           if-no-files-found: error
           retention-days: 7
