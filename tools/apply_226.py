@@ -7,7 +7,6 @@ src = java_path.read_text(encoding='utf-8')
 
 src = src.replace('private static final String VERSION = "2.2.5";', 'private static final String VERSION = "2.2.6";')
 
-# Add one-touch provisioning button into the admin form, before the standard HOME button.
 needle = '''        Button setHome = new Button(this);\n        setHome.setText("Đặt / đổi HOME mặc định");\n        setHome.setOnClickListener(v -> {\n'''
 replacement = '''        Button autoHome = new Button(this);\n        autoHome.setText("CÀI HOME TỰ ĐỘNG (1 CHẠM)");\n        autoHome.setOnClickListener(v -> {\n            url.clearFocus();\n            pin.clearFocus();\n            hideKeyboard(v);\n            provisionHomeOneTouch(autoHome, homeState);\n        });\n\n        Button setHome = new Button(this);\n        setHome.setText("Cách chuẩn / chọn HOME thủ công");\n        setHome.setOnClickListener(v -> {\n'''
 if needle not in src:
@@ -20,10 +19,8 @@ if needle2 not in src:
     raise SystemExit('Could not find homeState layout block')
 src = src.replace(needle2, replacement2, 1)
 
-# Update title after 2.2.5 transformation.
 src = src.replace('VHB QMS Display 2.2.5 • HOME Launcher', 'VHB QMS Display 2.2.6 • ONE-TOUCH HOME')
 
-# Insert one-touch provisioning helpers before the standard RoleManager path.
 marker = '    private void requestHomeRole() {'
 if marker not in src:
     raise SystemExit('Could not find requestHomeRole marker')
@@ -39,7 +36,7 @@ helpers = r'''    private void provisionHomeOneTouch(Button button, TextView hom
         button.setText("ĐANG CÀI HOME...");
 
         new Thread(() -> {
-            final int userId = android.os.UserHandle.myUserId();
+            final int userId = 0;
             final String pkg = getPackageName();
             final String setHome = "cmd package set-home-activity --user " + userId + " " + pkg;
             final String setRole = "cmd role add-role-holder --user " + userId
@@ -50,7 +47,6 @@ helpers = r'''    private void provisionHomeOneTouch(Button button, TextView hom
             boolean success = false;
             StringBuilder diagnostics = new StringBuilder();
 
-            // 1) Một số firmware Android Box cho phép lệnh package từ app hệ thống/OEM.
             try {
                 directAttempted = true;
                 diagnostics.append("DIRECT: ").append(execShell(setHome, false)).append('\n');
@@ -60,7 +56,6 @@ helpers = r'''    private void provisionHomeOneTouch(Button button, TextView hom
                 diagnostics.append("DIRECT_ERR: ").append(t.getClass().getSimpleName()).append('\n');
             }
 
-            // 2) Nếu firmware có root/su, tự xin quyền root và đặt HOME ngay trong app.
             if (!success) {
                 try {
                     String rootProbe = execShell("id", true);
@@ -81,7 +76,6 @@ helpers = r'''    private void provisionHomeOneTouch(Button button, TextView hom
                 }
             }
 
-            // 3) Fallback Role service; hữu ích trên một số firmware Android 10+.
             if (!success && rootAvailable) {
                 try {
                     diagnostics.append("ROOT_ROLE: ").append(execShell(setRole, true)).append('\n');
