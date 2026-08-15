@@ -1,0 +1,144 @@
+name: Export VHB QMS Android Display 2.2.10 Source Baseline
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+permissions:
+  contents: read
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply final 2.2.10 source state
+        run: |
+          patch -p1 < patches/2.2.4-keyboard-dismiss.patch
+          python3 tools/apply_225.py
+          python3 tools/apply_226.py
+          python3 tools/apply_227.py
+          python3 tools/apply_228.py
+          python3 tools/apply_229.py
+          python3 tools/apply_2210.py
+      - name: Create clean source baseline
+        run: |
+          set -e
+          OUT=VHB_QMS_Android_Display_2.2.10_SOURCE_BASELINE
+          rm -rf "$OUT"
+          mkdir -p "$OUT/.github/workflows"
+          cp -a app "$OUT/"
+          cp build.gradle gradle.properties settings.gradle "$OUT/"
+          cat > "$OUT/VERSION.txt" <<'EOF'
+          Product: VHB QMS Android Display
+          Baseline version: 2.2.10
+          Version code: 2021000
+          Engine: Mozilla GeckoView
+          Application ID: vn.com.vhb.qmsdisplay.gecko
+          Min SDK: 28
+          Target SDK: 36
+          Source baseline: flattened/final - no historical patch chain required
+          Supported build ABIs: armeabi-v7a (ARM32), arm64-v8a (ARM64)
+          EOF
+          cat > "$OUT/README_BASELINE.md" <<'EOF'
+          # VHB QMS Android Display 2.2.10 - Source Baseline
+
+          Đây là mã nguồn baseline sạch của VHB QMS Android Display 2.2.10 Hybrid Fast Boot.
+
+          ## Mục đích
+          - Lưu trữ để nâng cấp về sau.
+          - Source bên trong đã áp toàn bộ thay đổi đến 2.2.10.
+          - Không cần chạy lại các patch 2.2.4 -> 2.2.10.
+          - Có thể gửi nguyên file ZIP này cho ChatGPT/VHB kỹ thuật khi cần nâng cấp.
+
+          ## Thông số build
+          - Java/JDK: 17
+          - Android Gradle Plugin: 9.3.0
+          - Gradle: 9.5.0
+          - compileSdk/targetSdk: 36
+          - minSdk: 28
+          - Engine: Mozilla GeckoView 153.0.20260810162159
+          - Package: vn.com.vhb.qmsdisplay.gecko
+
+          ## Build ARM64
+          ```bash
+          gradle :app:assembleDebug -PvhbGeckoArtifact=geckoview-omni-arm64-v8a
+          ```
+
+          ## Build ARM32
+          ```bash
+          gradle :app:assembleDebug -PvhbGeckoArtifact=geckoview-omni-armeabi-v7a
+          ```
+
+          ## Ghi chú 2.2.10
+          - GeckoView thay Android System WebView.
+          - HTTP/HTTPS LAN.
+          - Hybrid Fast Boot: hiển thị VHB sớm bằng Direct Boot; Gecko/URL chạy theo luồng ổn định sau BOOT_COMPLETED/USER_UNLOCKED.
+          - Tự reconnect.
+          - PIN quản trị mặc định 1234.
+          - Giữ BACK khoảng 1.8 giây để mở quản trị.
+          - Có nút Ẩn bàn phím và THOÁT ỨNG DỤNG.
+          - Không ép HOME Launcher trên PANAPLAYBOX do firmware chặn quyền hệ thống.
+          EOF
+          cat > "$OUT/.github/workflows/build-apk.yml" <<'EOF'
+          name: Build VHB QMS Android Display 2.2.10 Baseline
+          on:
+            workflow_dispatch:
+            push:
+              branches: [ main ]
+          permissions:
+            contents: read
+          jobs:
+            build:
+              strategy:
+                fail-fast: false
+                matrix:
+                  include:
+                    - artifact: geckoview-omni-arm64-v8a
+                      suffix: ARM64
+                    - artifact: geckoview-omni-armeabi-v7a
+                      suffix: ARM32
+              runs-on: ubuntu-latest
+              timeout-minutes: 45
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/setup-java@v4
+                  with:
+                    distribution: temurin
+                    java-version: '17'
+                - uses: gradle/actions/setup-gradle@v4
+                  with:
+                    gradle-version: '9.5.0'
+                - name: Build ${{ matrix.suffix }}
+                  run: gradle :app:assembleDebug -PvhbGeckoArtifact=${{ matrix.artifact }} --stacktrace
+                - name: Package artifact
+                  run: |
+                    cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.2.10_${{ matrix.suffix }}.apk
+                    sha256sum VHB_QMS_Android_Display_2.2.10_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.2.10_${{ matrix.suffix }}.sha256
+                - uses: actions/upload-artifact@v4
+                  with:
+                    name: VHB-QMS-Android-Display-2.2.10-${{ matrix.suffix }}
+                    path: |
+                      VHB_QMS_Android_Display_2.2.10_${{ matrix.suffix }}.apk
+                      VHB_QMS_Android_Display_2.2.10_${{ matrix.suffix }}.sha256
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile, hashlib
+          root = Path('VHB_QMS_Android_Display_2.2.10_SOURCE_BASELINE')
+          out = Path('VHB_QMS_Android_Display_2.2.10_SOURCE_BASELINE.zip')
+          with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+              for p in sorted(root.rglob('*')):
+                  if p.is_file():
+                      z.write(p, p.as_posix())
+          digest = hashlib.sha256(out.read_bytes()).hexdigest()
+          Path(str(out) + '.sha256').write_text(digest + '  ' + out.name + '\n', encoding='utf-8')
+          print(out, digest)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VHB-QMS-Android-Display-2.2.10-SOURCE-BASELINE
+          path: |
+            VHB_QMS_Android_Display_2.2.10_SOURCE_BASELINE.zip
+            VHB_QMS_Android_Display_2.2.10_SOURCE_BASELINE.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
