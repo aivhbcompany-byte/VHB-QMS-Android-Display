@@ -13,6 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Apply final 2.2.10 source state
         run: |
+          set -e
           patch -p1 < patches/2.2.4-keyboard-dismiss.patch
           python3 tools/apply_225.py
           python3 tools/apply_226.py
@@ -20,6 +21,29 @@ jobs:
           python3 tools/apply_228.py
           python3 tools/apply_229.py
           python3 tools/apply_2210.py
+          # Historical transforms update Android versionName/versionCode but the
+          # informational MainActivity VERSION constant originated in 2.2.3.
+          # Flatten it explicitly so the archived baseline is internally consistent.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java')
+          s = p.read_text(encoding='utf-8')
+          import re
+          s, count = re.subn(r'private static final String VERSION = "[^"]+";',
+                             'private static final String VERSION = "2.2.10";', s, count=1)
+          if count != 1:
+              raise SystemExit('Could not normalize MainActivity VERSION')
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Validate final source state
+        run: |
+          set -e
+          grep -F "versionCode 2021000" app/build.gradle
+          grep -F "versionName '2.2.10'" app/build.gradle
+          grep -F 'private static final String VERSION = "2.2.10";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F 'applicationId '\''vn.com.vhb.qmsdisplay.gecko'\''' app/build.gradle
+          grep -F 'android.intent.action.LOCKED_BOOT_COMPLETED' app/src/main/AndroidManifest.xml
+          grep -F 'THOÁT ỨNG DỤNG' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
       - name: Create clean source baseline
         run: |
           set -e
@@ -48,7 +72,7 @@ jobs:
           - Lưu trữ để nâng cấp về sau.
           - Source bên trong đã áp toàn bộ thay đổi đến 2.2.10.
           - Không cần chạy lại các patch 2.2.4 -> 2.2.10.
-          - Có thể gửi nguyên file ZIP này cho ChatGPT/VHB kỹ thuật khi cần nâng cấp.
+          - Khi cần nâng cấp, chỉ cần gửi lại nguyên file ZIP baseline này.
 
           ## Thông số build
           - Java/JDK: 17
@@ -71,13 +95,13 @@ jobs:
 
           ## Ghi chú 2.2.10
           - GeckoView thay Android System WebView.
-          - HTTP/HTTPS LAN.
+          - Hỗ trợ HTTP/HTTPS LAN.
           - Hybrid Fast Boot: hiển thị VHB sớm bằng Direct Boot; Gecko/URL chạy theo luồng ổn định sau BOOT_COMPLETED/USER_UNLOCKED.
-          - Tự reconnect.
-          - PIN quản trị mặc định 1234.
-          - Giữ BACK khoảng 1.8 giây để mở quản trị.
+          - Tự reconnect khi mạng trở lại.
+          - PIN quản trị mặc định: 1234.
+          - Giữ BACK khoảng 1.8 giây để mở Quản trị.
           - Có nút Ẩn bàn phím và THOÁT ỨNG DỤNG.
-          - Không ép HOME Launcher trên PANAPLAYBOX do firmware chặn quyền hệ thống.
+          - Không ép HOME Launcher trên PANAPLAYBOX vì firmware chặn quyền hệ thống.
           EOF
           cat > "$OUT/.github/workflows/build-apk.yml" <<'EOF'
           name: Build VHB QMS Android Display 2.2.10 Baseline
