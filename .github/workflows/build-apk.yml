@@ -40,6 +40,21 @@ jobs:
         run: python3 tools/apply_229.py
       - name: Apply 2.2.10 Hybrid Fast Boot proven Gecko path
         run: python3 tools/apply_2210.py
+      - name: Normalize validated 2.2.10 version marker
+        run: |
+          set -e
+          grep -F "versionCode 2021000" app/build.gradle
+          grep -F "versionName '2.2.10'" app/build.gradle
+          grep -F 'startOperationalMode()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java')
+          s=p.read_text(encoding='utf-8')
+          s,n=re.subn(r'private static final String VERSION = "[0-9.]+";', 'private static final String VERSION = "2.2.10";', s, count=1)
+          assert n == 1, n
+          p.write_text(s, encoding='utf-8')
+          PY
       - name: Apply 2.3.1 Counter Audio File Engine
         run: python3 tools/apply_231.py
       - name: Validate 2.3.1 source invariants
@@ -104,6 +119,17 @@ jobs:
           python3 tools/apply_228.py
           python3 tools/apply_229.py
           python3 tools/apply_2210.py
+          grep -F "versionCode 2021000" app/build.gradle
+          grep -F "versionName '2.2.10'" app/build.gradle
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java')
+          s=p.read_text(encoding='utf-8')
+          s,n=re.subn(r'private static final String VERSION = "[0-9.]+";', 'private static final String VERSION = "2.2.10";', s, count=1)
+          assert n == 1, n
+          p.write_text(s, encoding='utf-8')
+          PY
           python3 tools/apply_231.py
       - name: Package clean 2.3.1 source
         run: |
