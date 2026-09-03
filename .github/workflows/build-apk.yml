@@ -1,8 +1,8 @@
-name: Build VHB QMS Android Display 2.2.10 Hybrid Fast Boot
+name: Build VHB QMS Android Display 2.3.0 Counter Audio Edge
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, feature/counter-audio-2.3.0 ]
 permissions:
   contents: read
 jobs:
@@ -42,17 +42,82 @@ jobs:
         run: python3 tools/apply_229.py
       - name: Apply 2.2.10 Hybrid Fast Boot proven Gecko path
         run: python3 tools/apply_2210.py
-      - name: Build GeckoView ${{ matrix.suffix }} Hybrid Fast Boot APK
+      - name: Apply 2.3.0 Counter Audio Edge
+        run: python3 tools/apply_230.py
+      - name: Validate 2.3.0 source invariants
+        run: |
+          set -e
+          grep -F "versionCode 2030000" app/build.gradle
+          grep -F "versionName '2.3.0'" app/build.gradle
+          grep -F 'private static final String VERSION = "2.3.0";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F 'CounterAudioEdge counterAudioEdge' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F 'counterAudioEdge.bind(runtime, session, configuredUrl())' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F 'android.intent.action.TTS_SERVICE' app/src/main/AndroidManifest.xml
+          grep -F 'PREF_ENABLED = "counter_audio_enabled"' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'ensureBuiltIn(EXTENSION_URI, EXTENSION_ID)' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'sender.session != activeSession' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'private static final int QUEUE_MAX = 5' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'data-qms-call-id' app/src/main/assets/counter_audio/content.js
+          python3 -m json.tool app/src/main/assets/counter_audio/manifest.json >/dev/null
+          node --check app/src/main/assets/counter_audio/content.js
+      - name: Build GeckoView ${{ matrix.suffix }} Counter Audio Edge APK
         run: gradle :app:assembleDebug -PvhbGeckoArtifact=${{ matrix.artifact }} --stacktrace
       - name: Package artifact
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.2.10_HYBRID_FAST_BOOT_${{ matrix.suffix }}.apk
-          sha256sum VHB_QMS_Android_Display_2.2.10_HYBRID_FAST_BOOT_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.2.10_HYBRID_FAST_BOOT_${{ matrix.suffix }}.sha256
+          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_${{ matrix.suffix }}.apk
+          sha256sum VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_${{ matrix.suffix }}.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: VHB-QMS-Android-Display-2.2.10-HYBRID-FAST-BOOT-${{ matrix.suffix }}
+          name: VHB-QMS-Android-Display-2.3.0-COUNTER-AUDIO-EDGE-${{ matrix.suffix }}
           path: |
-            VHB_QMS_Android_Display_2.2.10_HYBRID_FAST_BOOT_${{ matrix.suffix }}.apk
-            VHB_QMS_Android_Display_2.2.10_HYBRID_FAST_BOOT_${{ matrix.suffix }}.sha256
+            VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_${{ matrix.suffix }}.apk
+            VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_${{ matrix.suffix }}.sha256
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
+
+  source-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Flatten source through 2.3.0
+        run: |
+          set -e
+          patch -p1 < patches/2.2.4-keyboard-dismiss.patch
+          python3 tools/apply_225.py
+          python3 tools/apply_226.py
+          python3 tools/apply_227.py
+          python3 tools/apply_228.py
+          python3 tools/apply_229.py
+          python3 tools/apply_2210.py
+          python3 tools/apply_230.py
+      - name: Package clean 2.3.0 source
+        run: |
+          set -e
+          OUT=VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_SOURCE
+          mkdir -p "$OUT/.github/workflows"
+          cp -a app "$OUT/"
+          cp build.gradle gradle.properties settings.gradle "$OUT/"
+          cp .github/workflows/build-apk.yml "$OUT/.github/workflows/build-apk.yml"
+          cat > "$OUT/VERSION.txt" <<'EOF'
+          Product: VHB QMS Android Display
+          Version: 2.3.0
+          Version code: 2030000
+          Feature: Counter Audio Edge
+          Engine: Mozilla GeckoView
+          Package: vn.com.vhb.qmsdisplay.gecko
+          Audio default: disabled
+          Audio runtime: Android TextToSpeech vi-VN
+          Dedupe: call_id when available, otherwise counter + ticket
+          Queue max: 5
+          EOF
+          zip -qr VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_SOURCE.zip "$OUT"
+          sha256sum VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_SOURCE.zip > VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_SOURCE.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VHB-QMS-Android-Display-2.3.0-COUNTER-AUDIO-EDGE-SOURCE
+          path: |
+            VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_SOURCE.zip
+            VHB_QMS_Android_Display_2.3.0_COUNTER_AUDIO_EDGE_SOURCE.sha256
+          if-no-files-found: error
+          retention-days: 14
