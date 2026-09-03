@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 java_path = Path('app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java')
 manifest_path = Path('app/src/main/AndroidManifest.xml')
@@ -6,13 +7,35 @@ gradle_path = Path('app/build.gradle')
 
 src = java_path.read_text(encoding='utf-8')
 
-if 'private static final String VERSION = "2.2.10";' not in src:
-    raise SystemExit('Expected flattened VHB QMS Android Display 2.2.10 source')
+# The 2.2.10 transform is structural. Some historical baseline chains left the
+# informational VERSION constant stale even though the operational 2.2.10 code
+# and Gradle metadata were correct. Gate on the actual 2.2.10 architecture, then
+# normalize user-visible version metadata deterministically.
+required_2210 = [
+    'private void startOperationalMode()',
+    'private void initializeOperationalPrefs()',
+    'private void syncBootFlags(boolean enabled)',
+    'operationalRetryDelayMs',
+]
+missing = [marker for marker in required_2210 if marker not in src]
+if missing:
+    raise SystemExit('Expected VHB QMS Android Display 2.2.10 architecture, missing: ' + ', '.join(missing))
 
-src = src.replace('private static final String VERSION = "2.2.10";',
-                  'private static final String VERSION = "2.3.0";', 1)
-src = src.replace('VHB QMS Display 2.2.10 • HYBRID FAST BOOT',
-                  'VHB QMS Display 2.3.0 • COUNTER AUDIO EDGE', 1)
+src, count = re.subn(
+    r'private static final String VERSION = "[^"]+";',
+    'private static final String VERSION = "2.3.0";',
+    src,
+    count=1,
+)
+if count != 1:
+    raise SystemExit('Could not normalize MainActivity VERSION')
+
+src, _ = re.subn(
+    r'VHB QMS Display 2\.2\.(?:9|10)\s*•\s*[^"\\n]+',
+    'VHB QMS Display 2.3.0 • COUNTER AUDIO EDGE',
+    src,
+    count=1,
+)
 
 field_anchor = '    private ConnectivityManager.NetworkCallback networkCallback;\n'
 if field_anchor not in src:
@@ -77,7 +100,7 @@ manifest_path.write_text(manifest, encoding='utf-8')
 
 gradle = gradle_path.read_text(encoding='utf-8')
 if "versionCode 2021000" not in gradle or "versionName '2.2.10'" not in gradle:
-    raise SystemExit('Expected Gradle version 2.2.10')
+    raise SystemExit('Expected Gradle metadata for 2.2.10 before applying 2.3.0')
 gradle = gradle.replace("versionCode 2021000", "versionCode 2030000", 1)
 gradle = gradle.replace("versionName '2.2.10'", "versionName '2.3.0'", 1)
 gradle_path.write_text(gradle, encoding='utf-8')
