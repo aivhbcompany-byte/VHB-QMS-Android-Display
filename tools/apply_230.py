@@ -1,6 +1,7 @@
 from pathlib import Path
 
 java_path = Path('app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java')
+manifest_path = Path('app/src/main/AndroidManifest.xml')
 gradle_path = Path('app/build.gradle')
 
 src = java_path.read_text(encoding='utf-8')
@@ -62,6 +63,17 @@ if destroy_anchor not in src:
 src = src.replace(destroy_anchor, destroy_new, 1)
 
 java_path.write_text(src, encoding='utf-8')
+
+# Android 11+ package visibility: TextToSpeech clients targeting modern SDKs should
+# declare the TTS service query so the installed Vietnamese engine is discoverable.
+manifest = manifest_path.read_text(encoding='utf-8')
+if 'android.intent.action.TTS_SERVICE' not in manifest:
+    application_anchor = '    <application\n'
+    queries = '''    <queries>\n        <intent>\n            <action android:name="android.intent.action.TTS_SERVICE" />\n        </intent>\n    </queries>\n\n'''
+    if application_anchor not in manifest:
+        raise SystemExit('Could not find AndroidManifest application anchor')
+    manifest = manifest.replace(application_anchor, queries + application_anchor, 1)
+manifest_path.write_text(manifest, encoding='utf-8')
 
 gradle = gradle_path.read_text(encoding='utf-8')
 if "versionCode 2021000" not in gradle or "versionName '2.2.10'" not in gradle:
