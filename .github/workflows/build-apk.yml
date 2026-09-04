@@ -1,4 +1,4 @@
-name: Build VHB QMS Android Display 2.3.1 Audio File Engine
+name: Build VHB QMS Android Display 2.3.1 WAV Audio Engine
 on:
   workflow_dispatch:
   push:
@@ -26,7 +26,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.0'
-      - name: Apply stable baseline chain through 2.2.10
+      - name: Flatten stable baseline through 2.2.10
         run: |
           set -e
           patch -p1 < patches/2.2.4-keyboard-dismiss.patch
@@ -40,52 +40,39 @@ jobs:
           grep -F "versionName '2.2.10'" app/build.gradle
           grep -F 'startOperationalMode()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
           grep -F 'initializeOperationalPrefs()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-      - name: Apply 2.3.1 Audio File Engine
-        run: python3 tools/apply_231_v2.py
-      - name: Validate 2.3.1 and audio pack
+      - name: Apply clean 2.3.1 WAV Counter Audio Engine
+        run: python3 tools/apply_231_clean.py
+      - name: Validate 2.3.1 source invariants
         run: |
           set -e
-          grep -F "versionCode 2031000" app/build.gradle
+          grep -F "versionCode 2030100" app/build.gradle
           grep -F "versionName '2.3.1'" app/build.gradle
           grep -F 'private static final String VERSION = "2.3.1";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          grep -F 'class AudioPackManager' app/src/main/java/vn/com/vhb/qmsdisplay/AudioPackManager.java
-          grep -F 'class CounterAudioEngine' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEngine.java
-          grep -F 'default_audio_pack.zip' app/src/main/java/vn/com/vhb/qmsdisplay/AudioPackManager.java
-          grep -F 'data-qms-call-id' app/src/main/assets/qms_audio_bridge/content.js
-          grep -F 'CẬP NHẬT BỘ ÂM THANH (.ZIP)' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          python3 -m json.tool app/src/main/assets/qms_audio_bridge/manifest.json >/dev/null
-          node --check app/src/main/assets/qms_audio_bridge/content.js
-          python3 - <<'PY'
-          import io, json, wave, zipfile
-          from pathlib import Path
-          p=Path('app/src/main/assets/audio/default_audio_pack.zip')
-          req={'xin_moi_so.wav','den_quay_so.wav','khong.wav','mot.wav','hai.wav','ba.wav','bon.wav','nam.wav','sau.wav','bay.wav','tam.wav','chin.wav'}
-          with zipfile.ZipFile(p) as z:
-              files={Path(n).name:n for n in z.namelist() if not n.endswith('/')}
-              assert req <= set(files), req-set(files)
-              assert 'audio_manifest.json' in files
-              json.loads(z.read(files['audio_manifest.json']))
-              wavs=[]
-              for base,n in files.items():
-                  if not base.endswith('.wav'): continue
-                  with wave.open(io.BytesIO(z.read(n)),'rb') as w:
-                      assert (w.getnchannels(),w.getsampwidth(),w.getframerate(),w.getcomptype()) == (1,2,22050,'NONE')
-                  wavs.append(base)
-              assert len(wavs) == 18, len(wavs)
-          print('audio_pack_validation=PASS; wav_count=18')
-          PY
+          grep -F 'private CounterAudioEdge counterAudioEdge;' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F 'counterAudioEdge.bind(runtime, session, configuredUrl())' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F 'counterAudioEdge.handleActivityResult' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F 'class CounterAudioEdge' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'new MediaPlayer()' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'Intent.ACTION_OPEN_DOCUMENT' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'CẬP NHẬT BỘ ÂM THANH (.ZIP)' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'File cùng tên đã được thay thế' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'data-qms-call-id' app/src/main/assets/counter_audio/content.js
+          ! grep -R -F 'TextToSpeech' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          python3 -m json.tool app/src/main/assets/counter_audio/manifest.json >/dev/null
+          node --check app/src/main/assets/counter_audio/content.js
       - name: Build GeckoView ${{ matrix.suffix }} APK
         run: gradle :app:assembleDebug -PvhbGeckoArtifact=${{ matrix.artifact }} --stacktrace
       - name: Package APK
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_${{ matrix.suffix }}.apk
-          sha256sum VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_${{ matrix.suffix }}.sha256
+          set -e
+          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_${{ matrix.suffix }}.apk
+          sha256sum VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_${{ matrix.suffix }}.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: VHB-QMS-Android-Display-2.3.1-AUDIO-FILE-ENGINE-${{ matrix.suffix }}
+          name: VHB-QMS-Android-Display-2.3.1-WAV-COUNTER-AUDIO-${{ matrix.suffix }}
           path: |
-            VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_${{ matrix.suffix }}.apk
-            VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_${{ matrix.suffix }}.sha256
+            VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_${{ matrix.suffix }}.apk
+            VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_${{ matrix.suffix }}.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -94,7 +81,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Flatten source through 2.3.1
+      - name: Flatten clean source through 2.3.1
         run: |
           set -e
           patch -p1 < patches/2.2.4-keyboard-dismiss.patch
@@ -106,40 +93,66 @@ jobs:
           python3 tools/apply_2210.py
           grep -F "versionCode 2021000" app/build.gradle
           grep -F "versionName '2.2.10'" app/build.gradle
-          grep -F 'startOperationalMode()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          python3 tools/apply_231_v2.py
+          python3 tools/apply_231_clean.py
       - name: Validate flattened source
         run: |
           set -e
-          grep -F "versionCode 2031000" app/build.gradle
+          grep -F "versionCode 2030100" app/build.gradle
           grep -F "versionName '2.3.1'" app/build.gradle
           grep -F 'private static final String VERSION = "2.3.1";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          python3 - <<'PY'
-          import zipfile
-          from pathlib import Path
-          p=Path('app/src/main/assets/audio/default_audio_pack.zip')
-          with zipfile.ZipFile(p) as z:
-              assert len([n for n in z.namelist() if n.lower().endswith('.wav')]) == 18
-          print('source_audio_pack_validation=PASS')
-          PY
+          grep -F 'class CounterAudioEdge' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          node --check app/src/main/assets/counter_audio/content.js
+          python3 -m json.tool app/src/main/assets/counter_audio/manifest.json >/dev/null
       - name: Package clean 2.3.1 source
         run: |
           set -e
-          OUT=VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_SOURCE
+          OUT=VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE
           mkdir -p "$OUT/.github/workflows"
           cp -a app "$OUT/"
           cp build.gradle gradle.properties settings.gradle "$OUT/"
-          cp VERSION.txt "$OUT/VERSION.txt"
           cp .github/workflows/build-apk.yml "$OUT/.github/workflows/build-apk.yml"
+          cat > "$OUT/VERSION.txt" <<'EOF'
+          Product: VHB QMS Android Display
+          Version: 2.3.1
+          Version code: 2030100
+          Baseline: VHB QMS Android Display 2.2.10
+          Engine: Mozilla GeckoView
+          Package: vn.com.vhb.qmsdisplay.gecko
+          Counter audio: local WAV file engine
+          Android TTS: not used
+          Local audio default: disabled
+          Audio pack: import from Admin using .ZIP
+          WAV required: PCM mono 16-bit 22050 Hz
+          Audio update: same filename overwrites existing WAV
+          Queue max: 5
+          Dedupe: call_id when available, otherwise counter + ticket
+          EOF
+          cat > "$OUT/AUDIO_IMPORT_README.txt" <<'EOF'
+          VHB QMS Android Display 2.3.1 - WAV AUDIO PACK
+
+          Lần đầu:
+          1. Vào Quản trị của Android Display.
+          2. Chọn CẬP NHẬT BỘ ÂM THANH (.ZIP).
+          3. Chọn audio(1).zip.
+          4. App kiểm tra WAV PCM mono 16-bit 22050 Hz rồi lưu cục bộ.
+          5. Bật Phát loa gọi số tại màn hình quầy này.
+          6. Nhấn KIỂM TRA LOA: SỐ 105 ĐẾN QUẦY 1.
+
+          Khi đổi giọng:
+          - Thay WAV mới nhưng giữ nguyên tên file.
+          - Có thể nén toàn bộ pack hoặc chỉ các WAV cần thay.
+          - Import ZIP lại; file cùng tên sẽ được ghi đè.
+          - Không cần build lại APK.
+          EOF
           find "$OUT" -type f \( -name '*.orig' -o -name '*.pyc' -o -name '*.pyo' \) -delete
           find "$OUT" -type d -name '__pycache__' -prune -exec rm -rf {} +
-          zip -qr VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_SOURCE.zip "$OUT"
-          sha256sum VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_SOURCE.zip > VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_SOURCE.sha256
+          zip -qr VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE.zip "$OUT"
+          sha256sum VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE.zip > VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: VHB-QMS-Android-Display-2.3.1-AUDIO-FILE-ENGINE-SOURCE
+          name: VHB-QMS-Android-Display-2.3.1-WAV-COUNTER-AUDIO-SOURCE
           path: |
-            VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_SOURCE.zip
-            VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_SOURCE.sha256
+            VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE.zip
+            VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE.sha256
           if-no-files-found: error
           retention-days: 14
