@@ -1,8 +1,8 @@
-name: Build VHB QMS Android Display 2.3.1 WAV Audio Engine
+name: Build VHB QMS Android Display 2.3.2 Audio Pack Manager
 on:
   workflow_dispatch:
   push:
-    branches: [ main, feature/counter-audio-file-2.3.1 ]
+    branches: [ feature/counter-audio-file-2.3.2 ]
 permissions:
   contents: read
 jobs:
@@ -38,23 +38,27 @@ jobs:
           python3 tools/apply_2210.py
           grep -F "versionCode 2021000" app/build.gradle
           grep -F "versionName '2.2.10'" app/build.gradle
-          grep -F 'startOperationalMode()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          grep -F 'initializeOperationalPrefs()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-      - name: Apply clean 2.3.1 WAV Counter Audio Engine
+      - name: Apply 2.3.1 WAV Counter Audio Engine
         run: python3 tools/apply_231_clean.py
-      - name: Validate 2.3.1 source invariants
+      - name: Apply 2.3.2 Audio Pack Manager
+        run: python3 tools/apply_232.py
+      - name: Validate 2.3.2 source invariants
         run: |
           set -e
-          grep -F "versionCode 2030100" app/build.gradle
-          grep -F "versionName '2.3.1'" app/build.gradle
-          grep -F 'private static final String VERSION = "2.3.1";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F "versionCode 2030200" app/build.gradle
+          grep -F "versionName '2.3.2'" app/build.gradle
+          grep -F 'private static final String VERSION = "2.3.2";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F 'VHB QMS Display 2.3.2 • AUDIO PACK MANAGER' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
           grep -F 'private CounterAudioEdge counterAudioEdge;' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
           grep -F 'counterAudioEdge.bind(runtime, session, configuredUrl())' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          grep -F 'counterAudioEdge.handleActivityResult' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          grep -F 'class CounterAudioEdge' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
           grep -F 'new MediaPlayer()' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
-          grep -F 'Intent.ACTION_OPEN_DOCUMENT' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
-          grep -F 'CẬP NHẬT BỘ ÂM THANH (.ZIP)' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'PREF_PACK_NAME = "counter_audio_pack_name"' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'Bộ âm thanh hiện tại:' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'Cập nhật lần cuối:' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'MỞ THƯ MỤC ÂM THANH' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'Số lần đọc (1-3)' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'Khoảng nghỉ giữa các lần đọc' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'Âm lượng loa tại quầy' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
           grep -F 'File cùng tên đã được thay thế' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
           grep -F 'data-qms-call-id' app/src/main/assets/counter_audio/content.js
           ! grep -R -F 'TextToSpeech' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
@@ -65,14 +69,14 @@ jobs:
       - name: Package APK
         run: |
           set -e
-          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_${{ matrix.suffix }}.apk
-          sha256sum VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_${{ matrix.suffix }}.sha256
+          cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_${{ matrix.suffix }}.apk
+          sha256sum VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_${{ matrix.suffix }}.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: VHB-QMS-Android-Display-2.3.1-WAV-COUNTER-AUDIO-${{ matrix.suffix }}
+          name: VHB-QMS-Android-Display-2.3.2-AUDIO-PACK-MANAGER-${{ matrix.suffix }}
           path: |
-            VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_${{ matrix.suffix }}.apk
-            VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_${{ matrix.suffix }}.sha256
+            VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_${{ matrix.suffix }}.apk
+            VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_${{ matrix.suffix }}.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -81,7 +85,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Flatten clean source through 2.3.1
+      - name: Flatten clean source through 2.3.2
         run: |
           set -e
           patch -p1 < patches/2.2.4-keyboard-dismiss.patch
@@ -91,68 +95,63 @@ jobs:
           python3 tools/apply_228.py
           python3 tools/apply_229.py
           python3 tools/apply_2210.py
-          grep -F "versionCode 2021000" app/build.gradle
-          grep -F "versionName '2.2.10'" app/build.gradle
           python3 tools/apply_231_clean.py
+          python3 tools/apply_232.py
       - name: Validate flattened source
         run: |
           set -e
-          grep -F "versionCode 2030100" app/build.gradle
-          grep -F "versionName '2.3.1'" app/build.gradle
-          grep -F 'private static final String VERSION = "2.3.1";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          grep -F 'class CounterAudioEdge' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F "versionCode 2030200" app/build.gradle
+          grep -F "versionName '2.3.2'" app/build.gradle
+          grep -F 'private static final String VERSION = "2.3.2";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F 'MỞ THƯ MỤC ÂM THANH' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
+          grep -F 'Bộ âm thanh hiện tại:' app/src/main/java/vn/com/vhb/qmsdisplay/CounterAudioEdge.java
           node --check app/src/main/assets/counter_audio/content.js
           python3 -m json.tool app/src/main/assets/counter_audio/manifest.json >/dev/null
-      - name: Package clean 2.3.1 source
+      - name: Package clean 2.3.2 source
         run: |
           set -e
-          OUT=VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE
+          OUT=VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_SOURCE
           mkdir -p "$OUT/.github/workflows"
           cp -a app "$OUT/"
           cp build.gradle gradle.properties settings.gradle "$OUT/"
           cp .github/workflows/build-apk.yml "$OUT/.github/workflows/build-apk.yml"
           cat > "$OUT/VERSION.txt" <<'EOF'
           Product: VHB QMS Android Display
-          Version: 2.3.1
-          Version code: 2030100
+          Version: 2.3.2
+          Version code: 2030200
           Baseline: VHB QMS Android Display 2.2.10
           Engine: Mozilla GeckoView
           Package: vn.com.vhb.qmsdisplay.gecko
           Counter audio: local WAV file engine
           Android TTS: not used
           Local audio default: disabled
-          Audio pack: import from Admin using .ZIP
+          Audio pack: import/update ZIP from Admin
+          Audio pack status: filename, ready state, WAV count, last update time
+          Audio folder: in-app WAV inventory
           WAV required: PCM mono 16-bit 22050 Hz
           Audio update: same filename overwrites existing WAV
           Queue max: 5
           Dedupe: call_id when available, otherwise counter + ticket
           EOF
           cat > "$OUT/AUDIO_IMPORT_README.txt" <<'EOF'
-          VHB QMS Android Display 2.3.1 - WAV AUDIO PACK
+          VHB QMS Android Display 2.3.2 - AUDIO PACK MANAGER
 
-          Lần đầu:
-          1. Vào Quản trị của Android Display.
-          2. Chọn CẬP NHẬT BỘ ÂM THANH (.ZIP).
-          3. Chọn audio(1).zip.
-          4. App kiểm tra WAV PCM mono 16-bit 22050 Hz rồi lưu cục bộ.
-          5. Bật Phát loa gọi số tại màn hình quầy này.
-          6. Nhấn KIỂM TRA LOA: SỐ 105 ĐẾN QUẦY 1.
-
-          Khi đổi giọng:
-          - Thay WAV mới nhưng giữ nguyên tên file.
-          - Có thể nén toàn bộ pack hoặc chỉ các WAV cần thay.
-          - Import ZIP lại; file cùng tên sẽ được ghi đè.
-          - Không cần build lại APK.
+          - Chọn CẬP NHẬT BỘ ÂM THANH (.ZIP) để nạp audio(1).zip hoặc ZIP thay thế.
+          - File WAV mới giữ nguyên tên sẽ ghi đè file cũ.
+          - ZIP có thể đầy đủ hoặc chỉ chứa các WAV cần thay.
+          - Giao diện quản trị hiển thị tên ZIP gần nhất, trạng thái, tổng WAV và thời gian cập nhật.
+          - MỞ THƯ MỤC ÂM THANH hiển thị danh sách WAV thực tế app đang sử dụng.
+          - Chuẩn WAV: PCM mono 16-bit 22050 Hz.
           EOF
           find "$OUT" -type f \( -name '*.orig' -o -name '*.pyc' -o -name '*.pyo' \) -delete
           find "$OUT" -type d -name '__pycache__' -prune -exec rm -rf {} +
-          zip -qr VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE.zip "$OUT"
-          sha256sum VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE.zip > VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE.sha256
+          zip -qr VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_SOURCE.zip "$OUT"
+          sha256sum VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_SOURCE.zip > VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_SOURCE.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: VHB-QMS-Android-Display-2.3.1-WAV-COUNTER-AUDIO-SOURCE
+          name: VHB-QMS-Android-Display-2.3.2-AUDIO-PACK-MANAGER-SOURCE
           path: |
-            VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE.zip
-            VHB_QMS_Android_Display_2.3.1_WAV_COUNTER_AUDIO_SOURCE.sha256
+            VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_SOURCE.zip
+            VHB_QMS_Android_Display_2.3.2_AUDIO_PACK_MANAGER_SOURCE.sha256
           if-no-files-found: error
           retention-days: 14
