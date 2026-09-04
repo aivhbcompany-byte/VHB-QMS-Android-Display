@@ -45,9 +45,10 @@ jobs:
           set -e
           grep -F "versionCode 2021000" app/build.gradle
           grep -F "versionName '2.2.10'" app/build.gradle
+          grep -F 'private static final String VERSION = "2.2.10";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
           grep -F 'startOperationalMode()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
       - name: Apply 2.3.1 Counter Audio File Engine
-        run: python3 tools/apply_231_v2.py
+        run: python3 tools/apply_231.py
       - name: Validate 2.3.1 source invariants
         run: |
           set -e
@@ -113,8 +114,24 @@ jobs:
           python3 tools/apply_2210.py
           grep -F "versionCode 2021000" app/build.gradle
           grep -F "versionName '2.2.10'" app/build.gradle
+          grep -F 'private static final String VERSION = "2.2.10";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
           grep -F 'startOperationalMode()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          python3 tools/apply_231_v2.py
+          python3 tools/apply_231.py
+      - name: Validate clean 2.3.1 source before packaging
+        run: |
+          set -e
+          grep -F "versionCode 2031000" app/build.gradle
+          grep -F "versionName '2.3.1'" app/build.gradle
+          grep -F 'private static final String VERSION = "2.3.1";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          test -s app/src/main/assets/audio/default_audio_pack.zip
+          python3 - <<'PY'
+          import hashlib, zipfile
+          from pathlib import Path
+          p=Path('app/src/main/assets/audio/default_audio_pack.zip')
+          assert hashlib.sha256(p.read_bytes()).hexdigest() == 'b7c68f9542ebde9f2b40a54d2400a20905a02e3d8d151ada7c5ba047af240768'
+          with zipfile.ZipFile(p) as z: assert len([n for n in z.namelist() if n.lower().endswith('.wav')]) == 18
+          print('source_audio_pack_validation=PASS')
+          PY
       - name: Package clean 2.3.1 source
         run: |
           set -e
