@@ -40,15 +40,15 @@ jobs:
         run: python3 tools/apply_229.py
       - name: Apply 2.2.10 Hybrid Fast Boot proven Gecko path
         run: python3 tools/apply_2210.py
-      - name: Validate clean 2.2.10 baseline before upgrade
+      - name: Validate clean 2.2.10 architecture before upgrade
         run: |
           set -e
           grep -F "versionCode 2021000" app/build.gradle
           grep -F "versionName '2.2.10'" app/build.gradle
-          grep -F 'private static final String VERSION = "2.2.10";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
           grep -F 'startOperationalMode()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          grep -F 'initializeOperationalPrefs()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
       - name: Apply 2.3.1 Counter Audio File Engine
-        run: python3 tools/apply_231.py
+        run: python3 tools/apply_231_safe.py
       - name: Validate 2.3.1 source invariants
         run: |
           set -e
@@ -114,9 +114,9 @@ jobs:
           python3 tools/apply_2210.py
           grep -F "versionCode 2021000" app/build.gradle
           grep -F "versionName '2.2.10'" app/build.gradle
-          grep -F 'private static final String VERSION = "2.2.10";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
           grep -F 'startOperationalMode()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          python3 tools/apply_231.py
+          grep -F 'initializeOperationalPrefs()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
+          python3 tools/apply_231_safe.py
       - name: Validate clean 2.3.1 source before packaging
         run: |
           set -e
