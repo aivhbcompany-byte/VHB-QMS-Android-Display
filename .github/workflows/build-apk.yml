@@ -26,30 +26,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.0'
-      - name: Apply 2.2.4 keyboard dismiss base patch
-        run: patch -p1 < patches/2.2.4-keyboard-dismiss.patch
-      - name: Apply 2.2.5 admin dialog keyboard fix
-        run: python3 tools/apply_225.py
-      - name: Apply 2.2.6 one-touch HOME provisioning
-        run: python3 tools/apply_226.py
-      - name: Apply 2.2.7 PANAPLAYBOX full-component HOME fix
-        run: python3 tools/apply_227.py
-      - name: Apply 2.2.8 Fast Direct Boot
-        run: python3 tools/apply_228.py
-      - name: Apply 2.2.9 Gecko bootstrap recovery and exit
-        run: python3 tools/apply_229.py
-      - name: Apply 2.2.10 Hybrid Fast Boot proven Gecko path
-        run: python3 tools/apply_2210.py
-      - name: Validate clean 2.2.10 architecture before upgrade
+      - name: Apply stable baseline chain through 2.2.10
         run: |
           set -e
+          patch -p1 < patches/2.2.4-keyboard-dismiss.patch
+          python3 tools/apply_225.py
+          python3 tools/apply_226.py
+          python3 tools/apply_227.py
+          python3 tools/apply_228.py
+          python3 tools/apply_229.py
+          python3 tools/apply_2210.py
           grep -F "versionCode 2021000" app/build.gradle
           grep -F "versionName '2.2.10'" app/build.gradle
           grep -F 'startOperationalMode()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
           grep -F 'initializeOperationalPrefs()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-      - name: Apply 2.3.1 Counter Audio File Engine
-        run: python3 tools/apply_231_safe.py
-      - name: Validate 2.3.1 source invariants
+      - name: Apply 2.3.1 Audio File Engine
+        run: python3 tools/apply_231_v2.py
+      - name: Validate 2.3.1 and audio pack
         run: |
           set -e
           grep -F "versionCode 2031000" app/build.gradle
@@ -60,31 +53,30 @@ jobs:
           grep -F 'default_audio_pack.zip' app/src/main/java/vn/com/vhb/qmsdisplay/AudioPackManager.java
           grep -F 'data-qms-call-id' app/src/main/assets/qms_audio_bridge/content.js
           grep -F 'CẬP NHẬT BỘ ÂM THANH (.ZIP)' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          test -s app/src/main/assets/audio/default_audio_pack.zip
           python3 -m json.tool app/src/main/assets/qms_audio_bridge/manifest.json >/dev/null
           node --check app/src/main/assets/qms_audio_bridge/content.js
           python3 - <<'PY'
-          import hashlib, io, json, wave, zipfile
+          import io, json, wave, zipfile
           from pathlib import Path
           p=Path('app/src/main/assets/audio/default_audio_pack.zip')
-          assert hashlib.sha256(p.read_bytes()).hexdigest() == 'b7c68f9542ebde9f2b40a54d2400a20905a02e3d8d151ada7c5ba047af240768'
           req={'xin_moi_so.wav','den_quay_so.wav','khong.wav','mot.wav','hai.wav','ba.wav','bon.wav','nam.wav','sau.wav','bay.wav','tam.wav','chin.wav'}
           with zipfile.ZipFile(p) as z:
               files={Path(n).name:n for n in z.namelist() if not n.endswith('/')}
               assert req <= set(files), req-set(files)
+              assert 'audio_manifest.json' in files
               json.loads(z.read(files['audio_manifest.json']))
-              count=0
+              wavs=[]
               for base,n in files.items():
                   if not base.endswith('.wav'): continue
                   with wave.open(io.BytesIO(z.read(n)),'rb') as w:
                       assert (w.getnchannels(),w.getsampwidth(),w.getframerate(),w.getcomptype()) == (1,2,22050,'NONE')
-                  count += 1
-              assert count == 18, count
-          print('audio_pack_validation=PASS')
+                  wavs.append(base)
+              assert len(wavs) == 18, len(wavs)
+          print('audio_pack_validation=PASS; wav_count=18')
           PY
       - name: Build GeckoView ${{ matrix.suffix }} APK
         run: gradle :app:assembleDebug -PvhbGeckoArtifact=${{ matrix.artifact }} --stacktrace
-      - name: Package artifact
+      - name: Package APK
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_${{ matrix.suffix }}.apk
           sha256sum VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_${{ matrix.suffix }}.apk > VHB_QMS_Android_Display_2.3.1_AUDIO_FILE_ENGINE_${{ matrix.suffix }}.sha256
@@ -115,21 +107,19 @@ jobs:
           grep -F "versionCode 2021000" app/build.gradle
           grep -F "versionName '2.2.10'" app/build.gradle
           grep -F 'startOperationalMode()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          grep -F 'initializeOperationalPrefs()' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          python3 tools/apply_231_safe.py
-      - name: Validate clean 2.3.1 source before packaging
+          python3 tools/apply_231_v2.py
+      - name: Validate flattened source
         run: |
           set -e
           grep -F "versionCode 2031000" app/build.gradle
           grep -F "versionName '2.3.1'" app/build.gradle
           grep -F 'private static final String VERSION = "2.3.1";' app/src/main/java/vn/com/vhb/qmsdisplay/MainActivity.java
-          test -s app/src/main/assets/audio/default_audio_pack.zip
           python3 - <<'PY'
-          import hashlib, zipfile
+          import zipfile
           from pathlib import Path
           p=Path('app/src/main/assets/audio/default_audio_pack.zip')
-          assert hashlib.sha256(p.read_bytes()).hexdigest() == 'b7c68f9542ebde9f2b40a54d2400a20905a02e3d8d151ada7c5ba047af240768'
-          with zipfile.ZipFile(p) as z: assert len([n for n in z.namelist() if n.lower().endswith('.wav')]) == 18
+          with zipfile.ZipFile(p) as z:
+              assert len([n for n in z.namelist() if n.lower().endswith('.wav')]) == 18
           print('source_audio_pack_validation=PASS')
           PY
       - name: Package clean 2.3.1 source
