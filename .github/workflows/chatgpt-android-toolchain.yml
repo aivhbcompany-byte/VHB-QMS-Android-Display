@@ -52,11 +52,19 @@ jobs:
           org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
           EOF
           cat > /tmp/vhbdeps/app/build.gradle.kts <<'EOF'
+          import org.jetbrains.kotlin.gradle.dsl.JvmTarget
           plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
           android {
               namespace = "vn.vhb.cache"
               compileSdk = 35
               defaultConfig { applicationId = "vn.vhb.cache"; minSdk = 29; targetSdk = 35; versionCode = 1; versionName = "1" }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          }
+          kotlin {
+              compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
           }
           dependencies {
               implementation("androidx.core:core-ktx:1.16.0")
