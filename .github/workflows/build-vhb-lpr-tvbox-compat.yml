@@ -1,0 +1,107 @@
+name: Build VHB LPR TV Box Compatibility
+on:
+  push:
+    branches: [ vhb-lpr-agent-apk-020 ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare Android SDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+      - name: Derive TV Box project from validated 0.2.0 source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, textwrap
+          p=Path('.github/workflows/build-vhb-lpr-agent-020.yml')
+          s=p.read_text(encoding='utf-8')
+          a=s.index('      - name: Create VHB LPR project')
+          b=s.index('      - name: Download Gradle 8.11.1', a)
+          block=s[a:b]
+          marker='        run: |\n'
+          run=block.split(marker,1)[1]
+          lines=[]
+          for ln in run.splitlines():
+              lines.append(ln[10:] if ln.startswith('          ') else ln)
+          sh='\n'.join(lines)+'\n'
+          sh=sh.replace('minSdk = 29','minSdk = 21')
+          sh=sh.replace('targetSdk = 35','targetSdk = 27')
+          sh=sh.replace('versionCode = 20','versionCode = 21')
+          sh=sh.replace('versionName = "0.2.0"','versionName = "0.2.1-TVBOX"')
+          sh=sh.replace('Android Edge · Version 0.2.0','Android TV Box · Version 0.2.1')
+          sh=sh.replace('VHB LPR Edge Agent 0.2.0','VHB LPR Edge Agent TV Box 0.2.1')
+          sh=sh.replace('\\"agent_version\\":\\"0.2.0\\"','\\"agent_version\\":\\"0.2.1-TVBOX\\"')
+          for line in [
+              '              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />\n',
+              '              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n',
+              '              <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />\n',
+              '                  <item name="android:windowLightStatusBar">true</item>\n',
+              '                  android:usesCleartextTraffic="true">\n']:
+              if 'usesCleartextTraffic' in line:
+                  sh=sh.replace(line,'                  android:theme="@style/AppTheme">\n') if False else sh
+              else:
+                  sh=sh.replace(line,'')
+          sh=sh.replace('                  android:theme="@style/AppTheme"\n                  android:usesCleartextTraffic="true">','                  android:theme="@style/AppTheme">')
+          old='''                  <service\n                      android:name=".AgentService"\n                      android:exported="false"\n                      android:foregroundServiceType="specialUse">\n                      <property\n                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"\n                          android:value="VHB LPR edge agent continuously monitors configured camera/server connectivity and synchronizes device status." />\n                  </service>'''
+          sh=sh.replace(old,'                  <service android:name=".AgentService" android:exported="false" />')
+          sh=sh.replace('android:screenOrientation="portrait"','android:screenOrientation="landscape"')
+          sh=sh.replace('android:exported="false">\n                      <intent-filter>\n                          <action android:name="android.intent.action.BOOT_COMPLETED"','android:exported="true">\n                      <intent-filter>\n                          <action android:name="android.intent.action.BOOT_COMPLETED"')
+          sh=sh.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">','<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n              <uses-feature android:name="android.software.leanback" android:required="false" />\n              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />')
+          launcher='''                      <intent-filter>\n                          <action android:name="android.intent.action.MAIN" />\n                          <category android:name="android.intent.category.LAUNCHER" />\n                      </intent-filter>'''
+          sh=sh.replace(launcher, launcher+'\n                      <intent-filter>\n                          <action android:name="android.intent.action.MAIN" />\n                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />\n                      </intent-filter>')
+          sh=sh.replace('PendingIntent pi=PendingIntent.getActivity(this,0,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);','int pf=PendingIntent.FLAG_UPDATE_CURRENT; if(Build.VERSION.SDK_INT>=23) pf|=PendingIntent.FLAG_IMMUTABLE; PendingIntent pi=PendingIntent.getActivity(this,0,open,pf);')
+          sh=sh.replace('getSystemService(NotificationManager.class).createNotificationChannel(ch);','((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(ch);')
+          sh=sh.replace('getSystemService(NotificationManager.class).notify(2001,','((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(2001,')
+          sh=re.sub(r'              private void openBattery\(\)\{.*?              \}\n          \}\n          EOF', '''              private void openBattery(){\n                  try{ startActivity(new Intent(Settings.ACTION_SETTINGS)); }\n                  catch(Exception ignored){}\n              }\n          }\n          EOF''', sh, flags=re.S)
+          Path('/tmp/create_tvbox_project.sh').write_text(sh,encoding='utf-8')
+          PY
+          bash /tmp/create_tvbox_project.sh
+      - name: Download Gradle
+        run: |
+          curl -fsSL --retry 3 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+      - name: Build and validate TV Box APK
+        run: |
+          cd "$GITHUB_WORKSPACE/vhb-lpr-agent"
+          /tmp/gradle-8.11.1/bin/gradle --no-daemon :app:assembleDebug --stacktrace
+          APK="$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.1_TVBOX.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee "$GITHUB_WORKSPACE/APK_TVBOX_SIGNATURE.txt"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee "$GITHUB_WORKSPACE/APK_TVBOX_METADATA.txt"
+          grep "sdkVersion:'21'" "$GITHUB_WORKSPACE/APK_TVBOX_METADATA.txt"
+          grep "targetSdkVersion:'27'" "$GITHUB_WORKSPACE/APK_TVBOX_METADATA.txt"
+          sha256sum "$APK" | tee "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.1_TVBOX.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VHB-LPR-Android-Edge-Agent-0.2.1-TVBOX
+          path: |
+            VHB_LPR_Android_Edge_Agent_0.2.1_TVBOX.apk
+            VHB_LPR_Android_Edge_Agent_0.2.1_TVBOX.sha256
+            APK_TVBOX_METADATA.txt
+            APK_TVBOX_SIGNATURE.txt
+          retention-days: 7
+      - name: Publish TV Box test APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="vhb-lpr-agent-0.2.1-tvbox-test"
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+          gh release create "$TAG" \
+            "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.1_TVBOX.apk" \
+            "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.1_TVBOX.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "VHB LPR Android Edge Agent 0.2.1 TV Box" \
+            --notes "TV Box compatibility test: Android 5.0+, target SDK 27, TV Leanback launcher, legacy-compatible boot/background service. Same configuration/password behavior as 0.2.0." \
+            --prerelease
