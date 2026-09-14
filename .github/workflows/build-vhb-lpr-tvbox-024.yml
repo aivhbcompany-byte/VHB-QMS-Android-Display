@@ -1,0 +1,410 @@
+name: Build VHB LPR Android Edge Agent 0.2.4 TVBOX Live
+
+on:
+  push:
+    branches: [vhb-lpr-agent-apk-024]
+    paths:
+      - '.github/workflows/build-vhb-lpr-tvbox-024.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Restore validated 0.2.3 source
+        run: |
+          rm -rf lpr-android-agent-024
+          curl -fsSL --retry 3 -o /tmp/source023.zip \
+            https://github.com/aivhbcompany-byte/VHB-QMS-Android-Display/releases/download/vhb-lpr-agent-0.2.3-tvbox-test/VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX_Source.zip
+          unzip -q /tmp/source023.zip -d /tmp/source023
+          cp -a /tmp/source023/lpr-android-agent-022 lpr-android-agent-024
+
+      - name: Upgrade Gradle config to 0.2.4 + WebRTC
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lpr-android-agent-024/app/build.gradle.kts')
+          s=p.read_text()
+          s=s.replace('versionCode = 23','versionCode = 24').replace('versionCode = 22','versionCode = 24')
+          s=s.replace('versionName = "0.2.3-TVBOX"','versionName = "0.2.4-TVBOX"').replace('versionName = "0.2.2-TVBOX"','versionName = "0.2.4-TVBOX"')
+          if 'io.github.webrtc-sdk:android:' not in s:
+              s += '\n\ndependencies {\n    implementation("io.github.webrtc-sdk:android:150.7871.01")\n}\n'
+          p.write_text(s)
+          PY
+
+      - name: Add native RTSP to WebRTC bridge
+        run: |
+          cat > lpr-android-agent-024/app/src/main/java/vn/vhb/lpr/edge/RtspLiveBridge.java <<'EOF'
+          package vn.vhb.lpr.edge;
+
+          import android.media.Image;
+          import android.media.MediaCodec;
+          import android.media.MediaCodecInfo;
+          import android.media.MediaFormat;
+          import android.util.Base64;
+          import org.webrtc.CapturerObserver;
+          import org.webrtc.JavaI420Buffer;
+          import org.webrtc.VideoFrame;
+
+          import java.io.*;
+          import java.net.*;
+          import java.nio.ByteBuffer;
+          import java.nio.charset.StandardCharsets;
+          import java.security.MessageDigest;
+          import java.util.*;
+          import java.util.concurrent.ArrayBlockingQueue;
+          import java.util.concurrent.atomic.AtomicBoolean;
+          import java.util.regex.Matcher;
+          import java.util.regex.Pattern;
+
+          public final class RtspLiveBridge implements AutoCloseable {
+              public interface Status { void onStatus(String status); }
+              private final String url, username, password;
+              private final CapturerObserver observer;
+              private final int targetFps;
+              private final Status status;
+              private final AtomicBoolean running = new AtomicBoolean(false);
+              private Thread rtspThread;
+              private RtspSocket rtsp;
+              private LiveDecoder decoder;
+
+              public RtspLiveBridge(String url, String username, String password, CapturerObserver observer, int targetFps, Status status) {
+                  this.url=url; this.username=username == null ? "" : username; this.password=password == null ? "" : password;
+                  this.observer=observer; this.targetFps=Math.max(2, Math.min(15, targetFps)); this.status=status;
+              }
+
+              public void start() {
+                  if (!running.compareAndSet(false,true)) return;
+                  observer.onCapturerStarted(true);
+                  rtspThread = new Thread(this::loop,"vhb-live-rtsp"); rtspThread.setDaemon(true); rtspThread.start();
+              }
+
+              private void loop() {
+                  while (running.get()) {
+                      try {
+                          setStatus("rtsp_connecting");
+                          rtsp = new RtspSocket(url,username,password, au -> {
+                              if (decoder == null || !decoder.codecName.equals(au.codec)) {
+                                  if (decoder != null) decoder.close();
+                                  decoder = new LiveDecoder(au.codec, observer, targetFps, this::setStatus);
+                              }
+                              decoder.offer(au);
+                          });
+                          rtsp.run();
+                      } catch (Throwable e) {
+                          setStatus("rtsp_error:" + safe(e.getMessage()));
+                      } finally {
+                          try { if (rtsp != null) rtsp.close(); } catch (Exception ignored) {}
+                          rtsp=null;
+                      }
+                      if (running.get()) try { Thread.sleep(1200); } catch (InterruptedException e) { break; }
+                  }
+              }
+
+              private void setStatus(String s) { if (status != null) status.onStatus(s); }
+              private static String safe(String s) { return s == null ? "" : s; }
+
+              @Override public void close() {
+                  running.set(false);
+                  try { if (rtsp != null) rtsp.close(); } catch (Exception ignored) {}
+                  try { if (decoder != null) decoder.close(); } catch (Exception ignored) {}
+                  if (rtspThread != null) rtspThread.interrupt();
+                  observer.onCapturerStopped();
+              }
+
+              static final class AccessUnit {
+                  final String codec; final long ptsUs; final byte[] data; final boolean key;
+                  AccessUnit(String codec,long ptsUs,byte[] data,boolean key){this.codec=codec;this.ptsUs=ptsUs;this.data=data;this.key=key;}
+              }
+
+              interface UnitSink { void onUnit(AccessUnit au); }
+
+              static final class RtspSocket implements AutoCloseable {
+                  final String sourceUrl,user,pass; final UnitSink sink;
+                  Socket socket; BufferedInputStream in; BufferedOutputStream out;
+                  int cseq=1; String auth="", session=""; volatile boolean open=true; Depacketizer dep;
+                  RtspSocket(String u,String user,String pass,UnitSink sink){this.sourceUrl=u;this.user=user;this.pass=pass;this.sink=sink;}
+
+                  void run() throws Exception {
+                      URI u=new URI(sourceUrl); String host=u.getHost(); if(host==null) throw new IOException("RTSP host missing");
+                      int port=u.getPort()>0?u.getPort():554;
+                      socket=new Socket(); socket.connect(new InetSocketAddress(host,port),6000); socket.setSoTimeout(15000); socket.setTcpNoDelay(true); socket.setKeepAlive(true);
+                      in=new BufferedInputStream(socket.getInputStream(),512*1024); out=new BufferedOutputStream(socket.getOutputStream(),64*1024);
+                      request("OPTIONS",sourceUrl,Collections.emptyMap());
+                      Response d=request("DESCRIBE",sourceUrl,Collections.singletonMap("Accept","application/sdp"));
+                      Track t=parseTrack(new String(d.body,StandardCharsets.UTF_8));
+                      String setupUrl=resolveControl(sourceUrl,d.headers.get("content-base"),t.control);
+                      Response setup=request("SETUP",setupUrl,Collections.singletonMap("Transport","RTP/AVP/TCP;unicast;interleaved=0-1"));
+                      session=setup.headers.getOrDefault("session","").split(";",2)[0]; if(session.isEmpty()) throw new IOException("RTSP session missing");
+                      dep=new Depacketizer(t.codec,t.clock,sink);
+                      Map<String,String> ph=new LinkedHashMap<>(); ph.put("Session",session); ph.put("Range","npt=0.000-"); request("PLAY",sourceUrl,ph);
+                      while(open){
+                          int first=in.read(); if(first<0) throw new EOFException("RTSP EOF");
+                          if(first=='$'){
+                              int ch=in.read(), hi=in.read(), lo=in.read(); if(ch<0||hi<0||lo<0) throw new EOFException();
+                              int len=(hi<<8)|lo; byte[] pkt=new byte[len]; readFully(in,pkt); if(ch==0) dep.onRtp(pkt);
+                          } else {
+                              String line=((char)first)+(readLine(in)==null?"":readLineRemainder(in));
+                              if(line.startsWith("RTSP/")){ while(true){String h=readLine(in); if(h==null||h.isEmpty())break;} }
+                          }
+                      }
+                  }
+
+                  Response request(String method,String uri,Map<String,String> extra) throws Exception {
+                      Response r=raw(method,uri,extra,false);
+                      if(r.code==401){ auth=r.headers.getOrDefault("www-authenticate",""); if(user.isEmpty()||auth.isEmpty()) throw new IOException("RTSP authentication required"); r=raw(method,uri,extra,true); }
+                      if(r.code<200||r.code>=300) throw new IOException("RTSP "+method+" "+r.code);
+                      return r;
+                  }
+
+                  Response raw(String method,String uri,Map<String,String> extra,boolean withAuth) throws Exception {
+                      StringBuilder sb=new StringBuilder(); sb.append(method).append(' ').append(uri).append(" RTSP/1.0\r\n");
+                      sb.append("CSeq: ").append(cseq++).append("\r\nUser-Agent: VHB-LPR-Android/0.2.4-TVBOX\r\n");
+                      if(!session.isEmpty()&&!extra.containsKey("Session")) sb.append("Session: ").append(session).append("\r\n");
+                      for(Map.Entry<String,String> e:extra.entrySet()) sb.append(e.getKey()).append(": ").append(e.getValue()).append("\r\n");
+                      if(withAuth||!auth.isEmpty()) sb.append("Authorization: ").append(authHeader(auth,user,pass,method,uri)).append("\r\n");
+                      sb.append("\r\n"); out.write(sb.toString().getBytes(StandardCharsets.ISO_8859_1)); out.flush(); return readResponse();
+                  }
+
+                  Response readResponse() throws Exception {
+                      List<String> lines=new ArrayList<>(); while(true){String l=readLine(in); if(l==null) throw new EOFException(); if(l.isEmpty())break; lines.add(l);} if(lines.isEmpty())throw new IOException("Empty RTSP response");
+                      String[] st=lines.get(0).split(" ",3); int code=Integer.parseInt(st[1]); Map<String,String> h=new LinkedHashMap<>();
+                      for(int i=1;i<lines.size();i++){int x=lines.get(i).indexOf(':'); if(x>0)h.put(lines.get(i).substring(0,x).trim().toLowerCase(Locale.US),lines.get(i).substring(x+1).trim());}
+                      int n=0;try{n=Integer.parseInt(h.getOrDefault("content-length","0"));}catch(Exception ignored){} byte[] body=new byte[Math.max(0,n)]; readFully(in,body); return new Response(code,h,body);
+                  }
+
+                  static String readLine(BufferedInputStream i) throws Exception { StringBuilder s=new StringBuilder(); int prev=-1; while(true){int b=i.read(); if(b<0)return s.length()==0?null:s.toString(); if(prev=='\r'&&b=='\n'){s.setLength(Math.max(0,s.length()-1));return s.toString();} s.append((char)b);prev=b;} }
+                  static String readLineRemainder(BufferedInputStream i) throws Exception { String l=readLine(i); return l==null?"":l; }
+                  static void readFully(InputStream i,byte[] b)throws Exception{int o=0;while(o<b.length){int n=i.read(b,o,b.length-o);if(n<=0)throw new EOFException();o+=n;}}
+                  @Override public void close(){open=false;try{if(socket!=null)socket.close();}catch(Exception ignored){}}
+              }
+
+              static final class Response { final int code; final Map<String,String> headers; final byte[] body; Response(int c,Map<String,String>h,byte[]b){code=c;headers=h;body=b;} }
+              static final class Track { String control="trackID=1",codec="H264"; int clock=90000; }
+
+              static Track parseTrack(String sdp) throws Exception {
+                  Track t=new Track(); boolean video=false, found=false;
+                  for(String raw:sdp.split("\\r?\\n")){
+                      String l=raw.trim(); if(l.startsWith("m=")){video=l.startsWith("m=video");continue;} if(!video)continue;
+                      if(l.startsWith("a=control:"))t.control=l.substring(10).trim();
+                      if(l.startsWith("a=rtpmap:")){String v=l.substring(l.indexOf(' ')+1);String[] p=v.split("/");String c=p[0].toUpperCase(Locale.US);if(c.equals("H264")||c.equals("H265")||c.equals("HEVC")){t.codec=c.equals("HEVC")?"H265":c; if(p.length>1)try{t.clock=Integer.parseInt(p[1]);}catch(Exception ignored){} found=true;}}
+                  }
+                  if(!found)throw new IOException("Live stream phải dùng H264/H265"); return t;
+              }
+
+              static String resolveControl(String base,String contentBase,String control)throws Exception{
+                  if(control.toLowerCase(Locale.US).startsWith("rtsp://"))return control; String b=contentBase==null||contentBase.trim().isEmpty()?base:contentBase.trim(); if(control.startsWith("/")){URI u=new URI(base);return u.getScheme()+"://"+u.getAuthority()+control;} return b.replaceAll("/+$","")+"/"+control.replaceFirst("^/+","");
+              }
+
+              static String authHeader(String challenge,String user,String pass,String method,String uri)throws Exception{
+                  if(challenge.toLowerCase(Locale.US).startsWith("basic"))return "Basic "+Base64.encodeToString((user+":"+pass).getBytes(StandardCharsets.UTF_8),Base64.NO_WRAP);
+                  if(!challenge.toLowerCase(Locale.US).startsWith("digest"))throw new IOException("Unsupported RTSP auth"); Map<String,String>a=parseDigest(challenge);String realm=a.get("realm"),nonce=a.get("nonce");if(realm==null||nonce==null)throw new IOException("Digest missing realm/nonce");
+                  String q=a.get("qop"); if(q!=null&&q.contains(","))q=q.split(",")[0].trim(); if(q!=null&&q.toLowerCase(Locale.US).contains("auth"))q="auth";
+                  String ha1=md5(user+":"+realm+":"+pass), ha2=md5(method+":"+uri), nc="00000001", cn=md5(Long.toString(System.nanoTime())).substring(0,16);
+                  String resp=(q==null||q.isEmpty())?md5(ha1+":"+nonce+":"+ha2):md5(ha1+":"+nonce+":"+nc+":"+cn+":"+q+":"+ha2);
+                  StringBuilder b=new StringBuilder("Digest username=\"").append(user).append("\", realm=\"").append(realm).append("\", nonce=\"").append(nonce).append("\", uri=\"").append(uri).append("\", response=\"").append(resp).append("\", algorithm=MD5");
+                  if(q!=null&&!q.isEmpty())b.append(", qop=").append(q).append(", nc=").append(nc).append(", cnonce=\"").append(cn).append("\""); if(a.get("opaque")!=null)b.append(", opaque=\"").append(a.get("opaque")).append("\""); return b.toString();
+              }
+              static Map<String,String> parseDigest(String c){Map<String,String>m=new HashMap<>();Matcher x=Pattern.compile("(\\w+)=((\\\"[^\\\"]*\\\")|([^,]+))").matcher(c.replaceFirst("(?i)^Digest\\s+",""));while(x.find()){String v=x.group(2).trim();if(v.startsWith("\"")&&v.endsWith("\""))v=v.substring(1,v.length()-1);m.put(x.group(1).toLowerCase(Locale.US),v);}return m;}
+              static String md5(String s)throws Exception{byte[]d=MessageDigest.getInstance("MD5").digest(s.getBytes(StandardCharsets.ISO_8859_1));StringBuilder b=new StringBuilder();for(byte v:d)b.append(String.format(Locale.US,"%02x",v&255));return b.toString();}
+
+              static final class Depacketizer {
+                  final String codec; final int clock; final UnitSink sink; long base=-1,last=-1; ByteArrayOutputStream au=new ByteArrayOutputStream(256*1024), fu; boolean key=false;
+                  Depacketizer(String c,int clock,UnitSink s){codec=c;this.clock=clock;sink=s;}
+                  void onRtp(byte[]p){if(p.length<12)return;int cc=p[0]&15;boolean ext=(p[0]&16)!=0,marker=(p[1]&128)!=0;long ts=((long)(p[4]&255)<<24)|((long)(p[5]&255)<<16)|((long)(p[6]&255)<<8)|(p[7]&255);int off=12+cc*4;if(ext){if(off+4>p.length)return;int words=((p[off+2]&255)<<8)|(p[off+3]&255);off+=4+words*4;}if(off>=p.length)return;if(last!=-1&&ts!=last&&au.size()>0)flush(last);if(base<0)base=ts;last=ts;if(codec.equals("H264"))h264(p,off);else h265(p,off);if(marker)flush(ts);}
+                  void nal(byte[]p,int o,int n){au.write(0);au.write(0);au.write(0);au.write(1);au.write(p,o,n);} 
+                  void h264(byte[]p,int o){int t=p[o]&31;if(t>=1&&t<=23){if(t==5)key=true;nal(p,o,p.length-o);}else if(t==24){int i=o+1;while(i+2<=p.length){int n=((p[i]&255)<<8)|(p[i+1]&255);i+=2;if(n<=0||i+n>p.length)break;if((p[i]&31)==5)key=true;nal(p,i,n);i+=n;}}else if(t==28&&o+2<p.length){int ind=p[o]&255,h=p[o+1]&255;boolean st=(h&128)!=0,en=(h&64)!=0;int nt=h&31;if(st){fu=new ByteArrayOutputStream();fu.write((ind&224)|nt);fu.write(p,o+2,p.length-o-2);if(nt==5)key=true;}else if(fu!=null)fu.write(p,o+2,p.length-o-2);if(en&&fu!=null){byte[]b=fu.toByteArray();nal(b,0,b.length);fu=null;}}}
+                  void h265(byte[]p,int o){if(o+2>p.length)return;int t=(p[o]>>1)&63;if(t<=47){if(t>=16&&t<=21)key=true;nal(p,o,p.length-o);}else if(t==49&&o+3<p.length){int h=p[o+2]&255;boolean st=(h&128)!=0,en=(h&64)!=0;int nt=h&63;if(st){fu=new ByteArrayOutputStream();fu.write((p[o]&129)|(nt<<1));fu.write(p[o+1]);fu.write(p,o+3,p.length-o-3);if(nt>=16&&nt<=21)key=true;}else if(fu!=null)fu.write(p,o+3,p.length-o-3);if(en&&fu!=null){byte[]b=fu.toByteArray();nal(b,0,b.length);fu=null;}}}
+                  void flush(long ts){byte[]d=au.toByteArray();au.reset();fu=null;if(d.length==0){key=false;return;}long delta=(ts-base)&0xffffffffL;long us=delta*1000000L/Math.max(1,clock);sink.onUnit(new AccessUnit(codec,us,d,key));key=false;}
+              }
+
+              static final class LiveDecoder implements AutoCloseable {
+                  final String codecName; final CapturerObserver observer; final int targetFps; final Status status;
+                  final ArrayBlockingQueue<AccessUnit> q=new ArrayBlockingQueue<>(5); final AtomicBoolean running=new AtomicBoolean(true); Thread thread; MediaCodec codec; boolean configured=false; long lastFrame=-1; final Map<Integer,byte[]> csd=new HashMap<>();
+                  LiveDecoder(String c,CapturerObserver o,int fps,Status s){codecName=c;observer=o;targetFps=fps;status=s;thread=new Thread(this::loop,"vhb-live-decode");thread.setDaemon(true);thread.start();}
+                  void offer(AccessUnit a){if(!q.offer(a)){q.poll();q.offer(a);}}
+                  void loop(){while(running.get())try{AccessUnit a=q.take();extractSets(a);if(!configured){if(!ready())continue;configure();}feed(a);drain();}catch(InterruptedException e){break;}catch(Throwable e){status.onStatus("decode_error:"+safe(e.getMessage()));reset();}}
+                  void extractSets(AccessUnit a){for(byte[]n:splitAnnexB(a.data)){if(n.length==0)continue;int t=codecName.equals("H264")?(n[0]&31):((n[0]>>1)&63);if((codecName.equals("H264")&&(t==7||t==8))||(!codecName.equals("H264")&&(t==32||t==33||t==34)))csd.put(t,n);}}
+                  boolean ready(){return codecName.equals("H264")?(csd.containsKey(7)&&csd.containsKey(8)):(csd.containsKey(32)&&csd.containsKey(33)&&csd.containsKey(34));}
+                  void configure()throws Exception{String mime=codecName.equals("H264")?MediaFormat.MIMETYPE_VIDEO_AVC:MediaFormat.MIMETYPE_VIDEO_HEVC;MediaFormat f=MediaFormat.createVideoFormat(mime,1280,720);f.setInteger(MediaFormat.KEY_COLOR_FORMAT,MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);if(codecName.equals("H264")){f.setByteBuffer("csd-0",ByteBuffer.wrap(start(csd.get(7))));f.setByteBuffer("csd-1",ByteBuffer.wrap(start(csd.get(8))));}else{ByteArrayOutputStream b=new ByteArrayOutputStream();for(int k:new int[]{32,33,34})b.write(start(csd.get(k)));f.setByteBuffer("csd-0",ByteBuffer.wrap(b.toByteArray()));}codec=MediaCodec.createDecoderByType(mime);codec.configure(f,null,null,0);codec.start();configured=true;status.onStatus("decode_ready:"+codecName);}
+                  void feed(AccessUnit a){int i=codec.dequeueInputBuffer(2000);if(i<0)return;ByteBuffer b=codec.getInputBuffer(i);if(b==null)return;b.clear();b.put(a.data);codec.queueInputBuffer(i,0,a.data.length,a.ptsUs,0);}
+                  void drain(){MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();while(true){int i=codec.dequeueOutputBuffer(info,0);if(i>=0){Image image=null;try{image=codec.getOutputImage(i);if(image!=null&&(lastFrame<0||info.presentationTimeUs-lastFrame>=1000000L/targetFps)){lastFrame=info.presentationTimeUs;JavaI420Buffer b=toI420(image);VideoFrame frame=new VideoFrame(b,0,System.nanoTime());observer.onFrameCaptured(frame);frame.release();status.onStatus("live_frames");}}finally{if(image!=null)image.close();codec.releaseOutputBuffer(i,false);}}else if(i==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED){status.onStatus("decode_format:"+codec.getOutputFormat().toString());}else return;}}
+                  JavaI420Buffer toI420(Image im){int w=im.getWidth(),h=im.getHeight();JavaI420Buffer b=JavaI420Buffer.allocate(w,h);copy(im.getPlanes()[0],w,h,b.getDataY(),b.getStrideY());copy(im.getPlanes()[1],(w+1)/2,(h+1)/2,b.getDataU(),b.getStrideU());copy(im.getPlanes()[2],(w+1)/2,(h+1)/2,b.getDataV(),b.getStrideV());return b;}
+                  void copy(Image.Plane p,int w,int h,ByteBuffer dst,int ds){ByteBuffer src=p.getBuffer().duplicate();int rs=p.getRowStride(),ps=p.getPixelStride();for(int y=0;y<h;y++){int so=y*rs,doff=y*ds;for(int x=0;x<w;x++){int si=so+x*ps;if(si<src.limit()&&doff+x<dst.capacity())dst.put(doff+x,src.get(si));}}}
+                  void reset(){configured=false;try{if(codec!=null)codec.stop();}catch(Exception ignored){}try{if(codec!=null)codec.release();}catch(Exception ignored){}codec=null;}
+                  @Override public void close(){running.set(false);thread.interrupt();reset();}
+                  static byte[]start(byte[]n){byte[]b=new byte[n.length+4];b[3]=1;System.arraycopy(n,0,b,4,n.length);return b;}
+                  static List<byte[]>splitAnnexB(byte[]d){List<byte[]>o=new ArrayList<>();List<Integer>s=new ArrayList<>();List<Integer>z=new ArrayList<>();for(int i=0;i+3<d.length;){if(d[i]==0&&d[i+1]==0&&d[i+2]==1){s.add(i);z.add(3);i+=3;}else if(i+4<=d.length&&d[i]==0&&d[i+1]==0&&d[i+2]==0&&d[i+3]==1){s.add(i);z.add(4);i+=4;}else i++;}for(int k=0;k<s.size();k++){int a=s.get(k)+z.get(k),e=k+1<s.size()?s.get(k+1):d.length;if(e>a)o.add(Arrays.copyOfRange(d,a,e));}return o;}
+              }
+          }
+          EOF
+
+      - name: Add WebRTC P2P + WHIP engine
+        run: |
+          cat > lpr-android-agent-024/app/src/main/java/vn/vhb/lpr/edge/WebRtcLiveEngine.java <<'EOF'
+          package vn.vhb.lpr.edge;
+
+          import android.content.Context;
+          import org.webrtc.*;
+          import java.io.*;
+          import java.net.*;
+          import java.nio.charset.StandardCharsets;
+          import java.util.*;
+          import java.util.concurrent.atomic.AtomicBoolean;
+
+          public final class WebRtcLiveEngine implements AutoCloseable {
+              public interface Callback { void onReady(String sdpOrUrl); void onState(String state); void onError(String error); }
+              public static final class IceSpec { public String url="",username="",password=""; }
+              private static boolean initialized=false;
+              private final Context context; private final String rtsp,user,pass; private final List<IceSpec> ice; private final Callback cb;
+              private EglBase egl; private PeerConnectionFactory factory; private VideoSource source; private VideoTrack track; private PeerConnection pc; private RtspLiveBridge bridge;
+              private final AtomicBoolean emitted=new AtomicBoolean(false); private String whipLocation="";
+
+              public WebRtcLiveEngine(Context c,String rtsp,String user,String pass,List<IceSpec> ice,Callback cb){this.context=c.getApplicationContext();this.rtsp=rtsp;this.user=user;this.pass=pass;this.ice=ice;this.cb=cb;init();}
+              private synchronized void init(){if(!initialized){PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).setEnableInternalTracer(false).createInitializationOptions());initialized=true;}egl=EglBase.create();factory=PeerConnectionFactory.builder().setVideoEncoderFactory(new DefaultVideoEncoderFactory(egl.getEglBaseContext(),true,true)).setVideoDecoderFactory(new DefaultVideoDecoderFactory(egl.getEglBaseContext())).createPeerConnectionFactory();source=factory.createVideoSource(false);track=factory.createVideoTrack("VHB-LIVE",source);track.setEnabled(true);}
+              private void startSource(){if(bridge!=null)return;bridge=new RtspLiveBridge(rtsp,user,pass,source.getCapturerObserver(),10,s->cb.onState(s));bridge.start();}
+              private PeerConnection makePc(){List<PeerConnection.IceServer> servers=new ArrayList<>();for(IceSpec s:ice){if(s.url==null||s.url.isEmpty())continue;PeerConnection.IceServer.Builder b=PeerConnection.IceServer.builder(s.url);if(s.username!=null&&!s.username.isEmpty())b.setUsername(s.username);if(s.password!=null&&!s.password.isEmpty())b.setPassword(s.password);servers.add(b.createIceServer());}PeerConnection.RTCConfiguration cfg=new PeerConnection.RTCConfiguration(servers);cfg.sdpSemantics=PeerConnection.SdpSemantics.UNIFIED_PLAN;cfg.continualGatheringPolicy=PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY;PeerConnection p=factory.createPeerConnection(cfg,new PeerConnection.Observer(){public void onSignalingChange(PeerConnection.SignalingState s){}public void onIceConnectionChange(PeerConnection.IceConnectionState s){cb.onState("ice:"+s.name());}public void onIceConnectionReceivingChange(boolean b){}public void onIceGatheringChange(PeerConnection.IceGatheringState s){cb.onState("gather:"+s.name());if(s==PeerConnection.IceGatheringState.COMPLETE)emitLocal();}public void onIceCandidate(IceCandidate c){}public void onIceCandidatesRemoved(IceCandidate[] c){}public void onAddStream(MediaStream s){}public void onRemoveStream(MediaStream s){}public void onDataChannel(DataChannel d){}public void onRenegotiationNeeded(){}public void onAddTrack(RtpReceiver r,MediaStream[] m){} });if(p==null)throw new IllegalStateException("createPeerConnection failed");p.addTrack(track,Collections.singletonList("VHB"));return p;}
+              public void startP2p(String offer){try{pc=makePc();startSource();pc.setRemoteDescription(new Obs(){public void onSetSuccess(){pc.createAnswer(new Obs(){public void onCreateSuccess(SessionDescription s){pc.setLocalDescription(new Obs(){public void onSetSuccess(){if(pc.iceGatheringState()==PeerConnection.IceGatheringState.COMPLETE)emitLocal();}},s);}},new MediaConstraints());}},new SessionDescription(SessionDescription.Type.OFFER,offer));}catch(Throwable e){cb.onError("P2P:"+e.getMessage());}}
+              private void emitLocal(){if(pc==null||emitted.get())return;SessionDescription s=pc.getLocalDescription();if(s!=null&&emitted.compareAndSet(false,true))cb.onReady(s.description);}
+              public void startWhip(String whipUrl,String bearer,String relayPage){try{emitted.set(false);pc=makePc();startSource();pc.createOffer(new Obs(){public void onCreateSuccess(SessionDescription s){pc.setLocalDescription(new Obs(){public void onSetSuccess(){waitAndWhip(whipUrl,bearer,relayPage);}},s);}},new MediaConstraints());}catch(Throwable e){cb.onError("WHIP:"+e.getMessage());}}
+              private void waitAndWhip(String u,String bearer,String page){new Thread(()->{try{long end=System.currentTimeMillis()+6000;while(pc!=null&&pc.iceGatheringState()!=PeerConnection.IceGatheringState.COMPLETE&&System.currentTimeMillis()<end)Thread.sleep(80);SessionDescription loc=pc==null?null:pc.getLocalDescription();if(loc==null)throw new IOException("No local SDP");HttpURLConnection c=(HttpURLConnection)new URL(u).openConnection();c.setConnectTimeout(7000);c.setReadTimeout(10000);c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("Content-Type","application/sdp");if(bearer!=null&&!bearer.isEmpty())c.setRequestProperty("Authorization","Bearer "+bearer);byte[]body=loc.description.getBytes(StandardCharsets.UTF_8);c.setFixedLengthStreamingMode(body.length);try(OutputStream o=c.getOutputStream()){o.write(body);}int code=c.getResponseCode();String ans=read(code>=400?c.getErrorStream():c.getInputStream());if(code<200||code>=300)throw new IOException("WHIP HTTP "+code+" "+ans);whipLocation=c.getHeaderField("Location");pc.setRemoteDescription(new Obs(){public void onSetSuccess(){cb.onState("relay_connected");cb.onReady(page);}},new SessionDescription(SessionDescription.Type.ANSWER,ans));}catch(Throwable e){cb.onError("WHIP:"+e.getMessage());}},"vhb-whip").start();}
+              static String read(InputStream i)throws Exception{if(i==null)return"";ByteArrayOutputStream b=new ByteArrayOutputStream();byte[]x=new byte[4096];for(int n;(n=i.read(x))>0;)b.write(x,0,n);return b.toString("UTF-8");}
+              @Override public void close(){try{if(!whipLocation.isEmpty()){HttpURLConnection c=(HttpURLConnection)new URL(whipLocation).openConnection();c.setRequestMethod("DELETE");c.setConnectTimeout(2000);c.getResponseCode();}}catch(Exception ignored){}try{if(bridge!=null)bridge.close();}catch(Exception ignored){}try{if(pc!=null)pc.close();}catch(Exception ignored){}try{if(track!=null)track.dispose();}catch(Exception ignored){}try{if(source!=null)source.dispose();}catch(Exception ignored){}try{if(factory!=null)factory.dispose();}catch(Exception ignored){}try{if(egl!=null)egl.release();}catch(Exception ignored){}bridge=null;pc=null;}
+              static class Obs implements SdpObserver{public void onCreateSuccess(SessionDescription s){}public void onSetSuccess(){}public void onCreateFailure(String e){}public void onSetFailure(String e){}}
+          }
+          EOF
+
+      - name: Add Odoo live session poller
+        run: |
+          cat > lpr-android-agent-024/app/src/main/java/vn/vhb/lpr/edge/LiveSessionManager.java <<'EOF'
+          package vn.vhb.lpr.edge;
+
+          import android.content.Context;
+          import org.json.*;
+          import java.io.*;
+          import java.net.*;
+          import java.nio.charset.StandardCharsets;
+          import java.util.*;
+
+          public final class LiveSessionManager implements AutoCloseable {
+              private final Context ctx; private WebRtcLiveEngine engine; private String activeKey="";
+              public LiveSessionManager(Context c){ctx=c.getApplicationContext();}
+              public synchronized void poll(){try{JSONObject r=post("/vhb_lpr_live/api/v1/agent/pull",new JSONObject().put("agent_code",ConfigStore.get(ctx,"agent_code","")));if(!r.optBoolean("ok",false))return;String action=r.optString("action","none");if("stop".equals(action)||"none".equals(action)){if(r.optBoolean("stop",false))stop();return;}String mode=r.optString("mode","p2p"),sid=r.optString("session_uuid","");String key=mode+":"+sid+":"+r.optString("relay_path","");if(key.equals(activeKey))return;stop();String rtsp=r.optString("live_rtsp_url",r.optString("rtsp_url",ConfigStore.get(ctx,"camera_live_rtsp",ConfigStore.get(ctx,"camera_rtsp",""))));String u=r.optString("camera_username",ConfigStore.get(ctx,"camera_user","")),p=r.optString("camera_password",ConfigStore.get(ctx,"camera_password",""));List<WebRtcLiveEngine.IceSpec> ice=parseIce(r.optJSONArray("ice_servers"));engine=new WebRtcLiveEngine(ctx,rtsp,u,p,ice,new WebRtcLiveEngine.Callback(){public void onReady(String value){try{if("relay".equals(mode))post("/vhb_lpr_live/api/v1/agent/relay_ready",new JSONObject().put("session_uuid",sid).put("relay_url",value));else post("/vhb_lpr_live/api/v1/agent/answer",new JSONObject().put("session_uuid",sid).put("answer_sdp",value));ConfigStore.put(ctx,"live_status","ACTIVE "+mode.toUpperCase(Locale.US));}catch(Exception e){ConfigStore.put(ctx,"live_status","ERROR "+e.getMessage());}}public void onState(String s){ConfigStore.put(ctx,"live_status",s);}public void onError(String e){ConfigStore.put(ctx,"live_status","ERROR "+e);try{post("/vhb_lpr_live/api/v1/agent/error",new JSONObject().put("session_uuid",sid).put("error",e));}catch(Exception ignored){}}});activeKey=key;ConfigStore.put(ctx,"live_status","STARTING "+mode.toUpperCase(Locale.US));if("relay".equals(mode))engine.startWhip(r.optString("whip_url",""),r.optString("whip_bearer_token",""),r.optString("relay_page_url",""));else engine.startP2p(r.optString("offer_sdp",""));}catch(Throwable e){ConfigStore.put(ctx,"live_status","ERROR "+(e.getMessage()==null?e.getClass().getSimpleName():e.getMessage()));}}
+              private List<WebRtcLiveEngine.IceSpec> parseIce(JSONArray a){List<WebRtcLiveEngine.IceSpec>o=new ArrayList<>();if(a==null)return o;for(int i=0;i<a.length();i++){JSONObject j=a.optJSONObject(i);if(j==null)continue;WebRtcLiveEngine.IceSpec s=new WebRtcLiveEngine.IceSpec();s.url=j.optString("url",j.optString("urls",""));s.username=j.optString("username","");s.password=j.optString("credential",j.optString("password",""));o.add(s);}return o;}
+              private JSONObject post(String path,JSONObject body)throws Exception{String base=ConfigStore.cleanServer(ConfigStore.get(ctx,"server_url",""));String db=ConfigStore.get(ctx,"database","OdooDB");String ep=base+path+"?db="+URLEncoder.encode(db,"UTF-8");HttpURLConnection c=(HttpURLConnection)new URL(ep).openConnection();c.setConnectTimeout(5000);c.setReadTimeout(7000);c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json; charset=utf-8");c.setRequestProperty("Accept","application/json");c.setRequestProperty("X-VHB-LPR-Token",ConfigStore.token(ctx));byte[]b=body.toString().getBytes(StandardCharsets.UTF_8);c.setFixedLengthStreamingMode(b.length);try(OutputStream o=c.getOutputStream()){o.write(b);}int code=c.getResponseCode();InputStream in=code>=400?c.getErrorStream():c.getInputStream();String raw=read(in);if(code<200||code>=300)throw new IOException("Live API HTTP "+code+" "+raw);Object v=new JSONTokener(raw).nextValue();if(v instanceof JSONObject){JSONObject j=(JSONObject)v;if(j.has("result")&&j.opt("result") instanceof JSONObject)return j.optJSONObject("result");return j;}throw new IOException("Invalid live API JSON");}
+              static String read(InputStream i)throws Exception{if(i==null)return"";ByteArrayOutputStream b=new ByteArrayOutputStream();byte[]x=new byte[4096];for(int n;(n=i.read(x))>0;)b.write(x,0,n);return b.toString("UTF-8");}
+              private synchronized void stop(){activeKey="";if(engine!=null){try{engine.close();}catch(Exception ignored){}engine=null;}ConfigStore.put(ctx,"live_status","IDLE");}
+              @Override public void close(){stop();}
+          }
+          EOF
+
+      - name: Patch service and UI for live runtime
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('lpr-android-agent-024/app/src/main/java/vn/vhb/lpr/edge')
+          p=root/'AgentService.java'; s=p.read_text()
+          s=s.replace('private ScheduledExecutorService executor;', 'private ScheduledExecutorService executor;\n    private ScheduledExecutorService liveExecutor;\n    private LiveSessionManager liveManager;')
+          marker='ConfigStore.put(this, "service_status", "RUNNING");'
+          repl='''liveManager = new LiveSessionManager(this);\n        liveExecutor = Executors.newSingleThreadScheduledExecutor();\n        liveExecutor.scheduleWithFixedDelay(() -> { try { liveManager.poll(); } catch (Throwable ignored) {} }, 3, 2, TimeUnit.SECONDS);\n        ConfigStore.put(this, "service_status", "RUNNING");'''
+          s=s.replace(marker,repl,1)
+          s=s.replace('if (executor != null) executor.shutdownNow();', 'if (executor != null) executor.shutdownNow();\n        if (liveExecutor != null) liveExecutor.shutdownNow();\n        try { if (liveManager != null) liveManager.close(); } catch (Exception ignored) {}')
+          s=s.replace('VHB LPR Edge Agent 0.2.2','VHB LPR Edge Agent 0.2.4')
+          s=s.replace('" · " + agent);','" · Live " + ConfigStore.get(this, "live_status", "IDLE") + " · " + agent);')
+          p.write_text(s)
+
+          p=root/'MainActivity.java'; s=p.read_text()
+          s=s.replace('Version 0.2.3','Version 0.2.4').replace('Version 0.2.2','Version 0.2.4')
+          s=s.replace('statusCamera.setText("Camera: " + ConfigStore.get(this, "camera_status", "Chưa kiểm tra") + " · " + ConfigStore.get(this, "camera_probe_message", ""));', 'statusCamera.setText("Camera: " + ConfigStore.get(this, "camera_status", "Chưa kiểm tra") + " · " + ConfigStore.get(this, "camera_probe_message", "") + "\\nLive Edge: " + ConfigStore.get(this, "live_status", "IDLE"));')
+          p.write_text(s)
+
+          p=root/'ConfigStore.java'; s=p.read_text();
+          # preserve a dedicated live RTSP key when camera source is saved
+          old='.putString("camera_rtsp", safe(rtsp))'
+          if old in s and 'camera_live_rtsp' not in s:
+              s=s.replace(old, old+'\n                .putString("camera_live_rtsp", liveFallback(safe(rtsp)))')
+              s=s.replace('private static String safe(String s) { return s == null ? "" : s; }', 'private static String liveFallback(String s) { if (s == null) return ""; if (s.contains("/Streaming/Channels/101")) return s.replace("/Streaming/Channels/101", "/Streaming/Channels/102"); return s; }\n\n    private static String safe(String s) { return s == null ? "" : s; }')
+          p.write_text(s)
+          PY
+
+      - name: Add 0.2.4 release note
+        run: |
+          cat > lpr-android-agent-024/RELEASE_0.2.4.md <<'EOF'
+          # VHB LPR Android Edge Agent 0.2.4 TVBOX - Live Edge
+          - P2P-first WebRTC live session from Android Box to authenticated Odoo browser.
+          - ICE STUN/TURN support; TURN is used automatically by WebRTC when direct NAT traversal fails.
+          - On-demand RTSP substream; Hikvision /101 automatically derives /102 fallback for Live.
+          - Dedicated MediaCodec decode -> WebRTC hardware encoder path. AI/main stream is not reused or blocked.
+          - MediaMTX WHIP publisher fallback for multi-viewer/relay mode.
+          - Live control plane is pulled outbound from Odoo; no inbound camera/Box port forwarding is required.
+          - Live RTSP is opened only while a live session exists.
+          - Field baseline intentionally uses decode -> WebRTC encode for broad Android compatibility. A later zero-reencode H264 packet-forward path can further reduce CPU after field validation.
+          EOF
+
+      - name: Download Gradle
+        run: |
+          curl -fsSL --retry 3 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+
+      - name: Build APK
+        run: |
+          cd lpr-android-agent-024
+          /tmp/gradle-8.11.1/bin/gradle --no-daemon :app:assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX.apk"
+
+      - name: Validate APK
+        run: |
+          APK="$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee APK_0.2.4_SIGNATURE.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee APK_0.2.4_METADATA.txt
+          grep "package: name='vn.vhb.lpr.edge'" APK_0.2.4_METADATA.txt
+          grep "versionName='0.2.4-TVBOX'" APK_0.2.4_METADATA.txt
+          grep "sdkVersion:'21'" APK_0.2.4_METADATA.txt
+          sha256sum "$APK" | tee VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX.sha256
+
+      - name: Package source
+        run: |
+          zip -qr VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX_Source.zip lpr-android-agent-024 -x '*/build/*' '*/.gradle/*'
+          sha256sum VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX_Source.zip > VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX_Source.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VHB-LPR-Android-Edge-Agent-0.2.4-TVBOX
+          retention-days: 7
+          path: |
+            VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX.apk
+            VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX.sha256
+            VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX_Source.zip
+            VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX_Source.sha256
+            APK_0.2.4_METADATA.txt
+            APK_0.2.4_SIGNATURE.txt
+
+      - name: Publish test release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="vhb-lpr-agent-0.2.4-tvbox-live-test"
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+          gh release create "$TAG" \
+            VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX.apk \
+            VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX.sha256 \
+            VHB_LPR_Android_Edge_Agent_0.2.4_TVBOX_Source.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "VHB LPR Android Edge Agent 0.2.4 TV Box Live Edge" \
+            --notes "Field-test Live Edge: P2P-first WebRTC, TURN ICE fallback, MediaMTX WHIP relay path, outbound-only control. Android 5.0+." \
+            --prerelease
