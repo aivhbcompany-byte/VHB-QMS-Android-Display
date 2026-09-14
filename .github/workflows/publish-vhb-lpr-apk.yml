@@ -1,0 +1,32 @@
+name: Publish VHB LPR Android Edge Agent 0.2.0 APK
+on:
+  push:
+    branches: [ vhb-lpr-agent-apk-020 ]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download validated APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          gh run download 34841810230 --repo "$GITHUB_REPOSITORY" --name VHB-LPR-Android-Edge-Agent-0.2.0-APK --dir out
+          ls -lah out
+      - name: Publish prerelease APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete vhb-lpr-agent-0.2.0-test --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create vhb-lpr-agent-0.2.0-test \
+            out/VHB_LPR_Android_Edge_Agent_0.2.0.apk \
+            out/VHB_LPR_Android_Edge_Agent_0.2.0.sha256 \
+            out/APK_METADATA.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "VHB LPR Android Edge Agent 0.2.0 Test" \
+            --notes "Field-test APK: configuration UI, boot autostart foreground service, changeable user password default 1234, fixed manufacturer recovery password 2580, server heartbeat and Hikvision RTSP configuration fields." \
+            --prerelease
