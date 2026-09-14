@@ -58,6 +58,15 @@ jobs:
           mkdir -p button-link-kiosk-build/output
           cp "$APK" button-link-kiosk-build/output/VHB_Button_Link_Kiosk_Android_1.0.4.apk
           sha256sum button-link-kiosk-build/output/VHB_Button_Link_Kiosk_Android_1.0.4.apk > button-link-kiosk-build/output/VHB_Button_Link_Kiosk_Android_1.0.4.sha256
+      - name: Upload validated APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VHB-Button-Link-Kiosk-Android-1.0.4
+          path: |
+            button-link-kiosk-build/output/VHB_Button_Link_Kiosk_Android_1.0.4.apk
+            button-link-kiosk-build/output/VHB_Button_Link_Kiosk_Android_1.0.4.sha256
+          if-no-files-found: error
+          retention-days: 7
       - name: Commit validated APK artifact
         run: |
           git config user.name 'github-actions[bot]'
