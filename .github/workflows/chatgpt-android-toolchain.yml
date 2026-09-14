@@ -46,6 +46,11 @@ jobs:
               id("org.jetbrains.kotlin.android") version "2.1.20" apply false
           }
           EOF
+          cat > /tmp/vhbdeps/gradle.properties <<'EOF'
+          android.useAndroidX=true
+          kotlin.code.style=official
+          org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
+          EOF
           cat > /tmp/vhbdeps/app/build.gradle.kts <<'EOF'
           plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
           android {
