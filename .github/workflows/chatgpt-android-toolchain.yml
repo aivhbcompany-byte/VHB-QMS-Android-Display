@@ -63,9 +63,7 @@ jobs:
                   targetCompatibility = JavaVersion.VERSION_17
               }
           }
-          kotlin {
-              compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
-          }
+          kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
           dependencies {
               implementation("androidx.core:core-ktx:1.16.0")
               implementation("com.squareup.okhttp3:okhttp:4.12.0")
@@ -95,16 +93,33 @@ jobs:
           cp -a "$SDK_SRC/build-tools/35.0.0" "$SDK_DST/build-tools/"
           cp -a "$SDK_SRC/platform-tools/." "$SDK_DST/platform-tools/"
           cp -a "$SDK_SRC/licenses/." "$SDK_DST/licenses/" || true
-      - name: Package toolchain
+      - name: Package and split toolchain
         run: |
           cd "$GITHUB_WORKSPACE"
           tar -czf vhb-android-offline-toolchain.tar.gz toolchain
-          ls -lh vhb-android-offline-toolchain.tar.gz
           sha256sum vhb-android-offline-toolchain.tar.gz > vhb-android-offline-toolchain.tar.gz.sha256
+          split -b 300M -d -a 2 vhb-android-offline-toolchain.tar.gz vhb-toolchain.part-
+          ls -lh vhb-toolchain.part-* vhb-android-offline-toolchain.tar.gz.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: vhb-android-offline-toolchain
+          name: vhb-toolchain-part-00
           path: |
-            vhb-android-offline-toolchain.tar.gz
+            vhb-toolchain.part-00
             vhb-android-offline-toolchain.tar.gz.sha256
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vhb-toolchain-part-01
+          path: vhb-toolchain.part-01
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vhb-toolchain-part-02
+          path: vhb-toolchain.part-02
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vhb-toolchain-part-03
+          path: vhb-toolchain.part-03
+          if-no-files-found: ignore
           retention-days: 1
