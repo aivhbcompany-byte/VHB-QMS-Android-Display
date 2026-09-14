@@ -1,0 +1,91 @@
+name: ChatGPT Android Toolchain Cache
+on:
+  push:
+    branches: [ chatgpt-apk-toolchain ]
+permissions:
+  contents: read
+jobs:
+  package-toolchain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare Android SDK 35
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Download Gradle 8.11.1
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/toolchain"
+          curl -fsSL --retry 3 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          unzip -q /tmp/gradle.zip -d "$GITHUB_WORKSPACE/toolchain"
+      - name: Resolve exact VHB Android dependencies
+        env:
+          GRADLE_USER_HOME: ${{ github.workspace }}/toolchain/gradle-home
+        run: |
+          mkdir -p /tmp/vhbdeps/app/src/main/java/vn/vhb/cache
+          cat > /tmp/vhbdeps/settings.gradle.kts <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name = "vhbdeps"
+          include(":app")
+          EOF
+          cat > /tmp/vhbdeps/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.9.2" apply false
+              id("org.jetbrains.kotlin.android") version "2.1.20" apply false
+          }
+          EOF
+          cat > /tmp/vhbdeps/app/build.gradle.kts <<'EOF'
+          plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
+          android {
+              namespace = "vn.vhb.cache"
+              compileSdk = 35
+              defaultConfig { applicationId = "vn.vhb.cache"; minSdk = 29; targetSdk = 35; versionCode = 1; versionName = "1" }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.16.0")
+              implementation("com.squareup.okhttp3:okhttp:4.12.0")
+              implementation("com.microsoft.onnxruntime:onnxruntime-android:1.29.0")
+              implementation("org.opencv:opencv:4.12.0")
+          }
+          EOF
+          cat > /tmp/vhbdeps/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:theme="@style/AppTheme"><activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity></application></manifest>
+          EOF
+          mkdir -p /tmp/vhbdeps/app/src/main/res/values
+          cat > /tmp/vhbdeps/app/src/main/res/values/styles.xml <<'EOF'
+          <resources><style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar"/></resources>
+          EOF
+          cat > /tmp/vhbdeps/app/src/main/java/vn/vhb/cache/MainActivity.kt <<'EOF'
+          package vn.vhb.cache
+          import android.app.Activity
+          class MainActivity: Activity()
+          EOF
+          cd /tmp/vhbdeps
+          "$GITHUB_WORKSPACE/toolchain/gradle-8.11.1/bin/gradle" --no-daemon :app:assembleDebug --stacktrace
+      - name: Copy minimal Android SDK
+        run: |
+          SDK_SRC="$ANDROID_HOME"
+          SDK_DST="$GITHUB_WORKSPACE/toolchain/android-sdk"
+          mkdir -p "$SDK_DST/platforms" "$SDK_DST/build-tools" "$SDK_DST/platform-tools" "$SDK_DST/licenses"
+          cp -a "$SDK_SRC/platforms/android-35" "$SDK_DST/platforms/"
+          cp -a "$SDK_SRC/build-tools/35.0.0" "$SDK_DST/build-tools/"
+          cp -a "$SDK_SRC/platform-tools/." "$SDK_DST/platform-tools/"
+          cp -a "$SDK_SRC/licenses/." "$SDK_DST/licenses/" || true
+      - name: Package toolchain
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          tar -czf vhb-android-offline-toolchain.tar.gz toolchain
+          ls -lh vhb-android-offline-toolchain.tar.gz
+          sha256sum vhb-android-offline-toolchain.tar.gz > vhb-android-offline-toolchain.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vhb-android-offline-toolchain
+          path: |
+            vhb-android-offline-toolchain.tar.gz
+            vhb-android-offline-toolchain.tar.gz.sha256
+          retention-days: 1
