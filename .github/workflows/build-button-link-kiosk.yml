@@ -14,30 +14,47 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Reconstruct source archive
+      - name: Reconstruct and verify source archive
         run: |
-          cat button-link-kiosk-build/source104.part.* > /tmp/vhb104.b64
+          cat \
+            button-link-kiosk-build/source104.part.00 \
+            button-link-kiosk-build/source104.part.01a \
+            button-link-kiosk-build/source104.part.01b \
+            button-link-kiosk-build/source104.part.01c \
+            button-link-kiosk-build/source104.part.01d0 \
+            button-link-kiosk-build/source104.part.01d1 \
+            button-link-kiosk-build/source104.part.01d2 \
+            button-link-kiosk-build/source104.part.01d3 \
+            button-link-kiosk-build/source104.part.01d4 \
+            button-link-kiosk-build/source104.part.02 \
+            button-link-kiosk-build/source104.part.03 \
+            button-link-kiosk-build/source104.part.04 \
+            > /tmp/vhb104.b64
+          test "$(wc -c < /tmp/vhb104.b64)" = "46008"
           base64 -d /tmp/vhb104.b64 > /tmp/vhb104.zip
+          echo '1787c22e991657cfdbb955669954a2d2d545f191a465d9d38ecf9a74849ae717  /tmp/vhb104.zip' | sha256sum -c -
           mkdir -p /tmp/vhb104
           unzip -q /tmp/vhb104.zip -d /tmp/vhb104
           unzip -t /tmp/vhb104.zip
-      - name: Build APK with Android Gradle Plugin
+      - name: Build APK with official Android Gradle Plugin
         run: |
           cd /tmp/vhb104/VHB_Button_Link_Kiosk_Android_1.0.4_Source
           gradle :app:assembleDebug --stacktrace
-      - name: Validate APK
+      - name: Validate APK structure and signature
         run: |
           APK=/tmp/vhb104/VHB_Button_Link_Kiosk_Android_1.0.4_Source/app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK"
           unzip -t "$APK"
-          ${ANDROID_HOME}/build-tools/35.0.0/apksigner verify --verbose --print-certs "$APK"
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
           mkdir -p button-link-kiosk-build/output
           cp "$APK" button-link-kiosk-build/output/VHB_Button_Link_Kiosk_Android_1.0.4.apk
           sha256sum button-link-kiosk-build/output/VHB_Button_Link_Kiosk_Android_1.0.4.apk > button-link-kiosk-build/output/VHB_Button_Link_Kiosk_Android_1.0.4.sha256
