@@ -1,0 +1,30 @@
+name: Stage direct VHB LPR APK
+on:
+  push:
+    branches: [ vhb-lpr-agent-apk-020 ]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: vhb-lpr-agent-apk-020
+      - name: Download validated APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh run download 34841810230 --repo "$GITHUB_REPOSITORY" --name VHB-LPR-Android-Edge-Agent-0.2.0-APK --dir /tmp/vhbapk
+          cp /tmp/vhbapk/VHB_LPR_Android_Edge_Agent_0.2.0.apk dist/VHB_LPR_Android_Edge_Agent_0.2.0.apk
+          cp /tmp/vhbapk/VHB_LPR_Android_Edge_Agent_0.2.0.sha256 dist/VHB_LPR_Android_Edge_Agent_0.2.0.sha256
+          cp /tmp/vhbapk/APK_METADATA.txt dist/APK_METADATA.txt
+      - name: Commit APK for direct download
+        run: |
+          git config user.name "VHB Build Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add dist/
+          git commit -m "Add validated VHB LPR Android Edge Agent 0.2.0 APK [skip ci]"
+          git push origin HEAD:vhb-lpr-agent-apk-020
