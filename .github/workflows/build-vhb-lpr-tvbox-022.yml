@@ -1,0 +1,80 @@
+name: Build VHB LPR Android Edge Agent 0.2.2 TVBOX
+on:
+  push:
+    branches: [ vhb-lpr-agent-apk-022 ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Download Gradle
+        run: |
+          curl -fsSL --retry 3 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+
+      - name: Build APK
+        run: |
+          cd "$GITHUB_WORKSPACE/lpr-android-agent-022"
+          /tmp/gradle-8.11.1/bin/gradle --no-daemon :app:assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX.apk"
+
+      - name: Validate APK
+        run: |
+          APK="$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee "$GITHUB_WORKSPACE/APK_0.2.2_SIGNATURE.txt"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee "$GITHUB_WORKSPACE/APK_0.2.2_METADATA.txt"
+          grep "package: name='vn.vhb.lpr.edge'" "$GITHUB_WORKSPACE/APK_0.2.2_METADATA.txt"
+          grep "versionName='0.2.2-TVBOX'" "$GITHUB_WORKSPACE/APK_0.2.2_METADATA.txt"
+          grep "sdkVersion:'21'" "$GITHUB_WORKSPACE/APK_0.2.2_METADATA.txt"
+          grep "targetSdkVersion:'27'" "$GITHUB_WORKSPACE/APK_0.2.2_METADATA.txt"
+          sha256sum "$APK" | tee "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX.sha256"
+
+      - name: Package source
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          zip -qr VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX_Source.zip lpr-android-agent-022 \
+            -x '*/build/*' '*/.gradle/*'
+          sha256sum VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX_Source.zip > VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX_Source.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VHB-LPR-Android-Edge-Agent-0.2.2-TVBOX
+          path: |
+            VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX.apk
+            VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX.sha256
+            VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX_Source.zip
+            VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX_Source.sha256
+            APK_0.2.2_METADATA.txt
+            APK_0.2.2_SIGNATURE.txt
+          retention-days: 7
+
+      - name: Publish test release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="vhb-lpr-agent-0.2.2-tvbox-test"
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+          gh release create "$TAG" \
+            "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX.apk" \
+            "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX.sha256" \
+            "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.2_TVBOX_Source.zip" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "VHB LPR Android Edge Agent 0.2.2 TV Box" \
+            --notes "TV Box field test: Odoo one-time enrollment, hidden token persistence, heartbeat, config sync, camera RTSP Basic/Digest probe, boot auto-start, user/manufacturer configuration lock. Android 5.0+, target SDK 27." \
+            --prerelease
