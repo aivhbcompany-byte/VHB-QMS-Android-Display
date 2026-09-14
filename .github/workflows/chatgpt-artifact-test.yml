@@ -1,0 +1,17 @@
+name: ChatGPT Artifact Bridge Test
+on:
+  push:
+    branches: [ chatgpt-apk-toolchain ]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create test artifact
+        run: echo "artifact bridge ok" > hello.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatgpt-artifact-test
+          path: hello.txt
+          retention-days: 1
