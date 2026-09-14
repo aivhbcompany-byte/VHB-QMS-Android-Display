@@ -1,0 +1,162 @@
+name: Build VHB LPR Android Edge Agent 0.2.3 TVBOX
+on:
+  push:
+    branches: [ vhb-lpr-agent-apk-023 ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Apply 0.2.3 camera credential fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('lpr-android-agent-022')
+
+          # build version
+          p=root/'app/build.gradle.kts'
+          s=p.read_text()
+          s=s.replace('versionCode = 22','versionCode = 23')
+          s=s.replace('versionName = "0.2.2-TVBOX"','versionName = "0.2.3-TVBOX"')
+          p.write_text(s)
+
+          # API version + broader credential-key compatibility
+          p=root/'app/src/main/java/vn/vhb/lpr/edge/ApiClient.java'
+          s=p.read_text()
+          s=s.replace('public static final String VERSION = "0.2.2-TVBOX";','public static final String VERSION = "0.2.3-TVBOX";')
+          s=s.replace('cr.cameraUser = first(camera, "username", "camera_username", "user", "login");',
+                      'cr.cameraUser = first(camera, "username", "camera_username", "camera_user", "rtsp_username", "rtsp_user", "user", "login");')
+          s=s.replace('cr.cameraPassword = first(camera, "password", "camera_password", "passwd");',
+                      'cr.cameraPassword = first(camera, "password", "camera_password", "camera_pass", "rtsp_password", "rtsp_pass", "passwd", "pass");\n'
+                      '            if (cr.cameraUser.isEmpty() || cr.cameraPassword.isEmpty()) {\n'
+                      '                JSONObject cred = camera.optJSONObject("credential");\n'
+                      '                if (cred == null) cred = camera.optJSONObject("credentials");\n'
+                      '                if (cred == null) cred = camera.optJSONObject("auth");\n'
+                      '                if (cred != null) {\n'
+                      '                    if (cr.cameraUser.isEmpty()) cr.cameraUser = first(cred, "username", "camera_username", "camera_user", "rtsp_username", "user", "login");\n'
+                      '                    if (cr.cameraPassword.isEmpty()) cr.cameraPassword = first(cred, "password", "camera_password", "camera_pass", "rtsp_password", "passwd", "pass");\n'
+                      '                }\n'
+                      '            }')
+          p.write_text(s)
+
+          # RTSP user-agent
+          p=root/'app/src/main/java/vn/vhb/lpr/edge/RtspProbe.java'
+          s=p.read_text().replace('VHB-LPR-Android/0.2.2-TVBOX','VHB-LPR-Android/0.2.3-TVBOX')
+          p.write_text(s)
+
+          # Service title/version
+          p=root/'app/src/main/java/vn/vhb/lpr/edge/AgentService.java'
+          s=p.read_text()
+          s=s.replace('vhb_lpr_agent_022','vhb_lpr_agent_023')
+          s=s.replace('private static final int NOTIFY_ID = 2202;','private static final int NOTIFY_ID = 2203;')
+          s=s.replace('VHB LPR Edge Agent 0.2.2','VHB LPR Edge Agent 0.2.3')
+          p.write_text(s)
+
+          # Main UI: make camera credentials normal user fields and improve 401 flow
+          p=root/'app/src/main/java/vn/vhb/lpr/edge/MainActivity.java'
+          s=p.read_text()
+          s=s.replace('private EditText server, database, agentCode, enrollmentCode;',
+                      'private EditText server, database, agentCode, enrollmentCode, cameraUser, cameraPassword;')
+          s=s.replace('Android TV Box · Version 0.2.2 · ', 'Android TV Box · Version 0.2.3 · ')
+
+          old='''        root.addView(section("CAMERA NHẬN TỪ ODOO"));\n        cameraInfo = statusText();\n        root.addView(cameraInfo);\n        Button testCamera = button("KIỂM TRA CAMERA RTSP");\n        testCamera.setOnClickListener(v -> testCamera());\n        root.addView(testCamera, paramsTop(10));\n'''
+          new='''        root.addView(section("CAMERA NHẬN TỪ ODOO"));\n        cameraInfo = statusText();\n        root.addView(cameraInfo);\n        root.addView(label("Tài khoản Camera"));\n        cameraUser = edit(ConfigStore.get(this, "camera_user", ""), "admin", false);\n        root.addView(cameraUser);\n        root.addView(label("Mật khẩu Camera"));\n        cameraPassword = edit(ConfigStore.get(this, "camera_password", ""), "Nhập mật khẩu Camera", true);\n        root.addView(cameraPassword);\n        CheckBox showCameraPassword = new CheckBox(this);\n        showCameraPassword.setText("Hiện mật khẩu Camera");\n        showCameraPassword.setOnCheckedChangeListener((buttonView, isChecked) -> {\n            int pos = cameraPassword.getSelectionStart();\n            cameraPassword.setInputType(InputType.TYPE_CLASS_TEXT | (isChecked ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_TEXT_VARIATION_PASSWORD));\n            if (pos >= 0 && pos <= cameraPassword.length()) cameraPassword.setSelection(pos);\n        });\n        root.addView(showCameraPassword);\n        LinearLayout cameraButtons = row();\n        Button saveCamera = button("LƯU TÀI KHOẢN CAMERA");\n        saveCamera.setOnClickListener(v -> { saveCameraFields(); toast("Đã lưu tài khoản Camera"); refreshStatus(); });\n        cameraButtons.addView(saveCamera, cell());\n        Button testCamera = button("KIỂM TRA CAMERA RTSP");\n        testCamera.setOnClickListener(v -> testCamera());\n        cameraButtons.addView(testCamera, cell());\n        root.addView(cameraButtons, paramsTop(10));\n'''
+          if old not in s:
+              raise SystemExit('camera UI anchor not found')
+          s=s.replace(old,new)
+
+          old='''    private void testCamera() {\n        String rtsp = ConfigStore.get(this, "camera_rtsp", "");\n        if (rtsp.isEmpty()) { toast("Chưa có RTSP. Hãy Đồng bộ cấu hình từ Odoo trước."); return; }\n        runAsync("Kiểm tra Camera", () -> {\n            RtspProbe.ProbeResult pr = RtspProbe.probe(rtsp, ConfigStore.get(this, "camera_user", ""), ConfigStore.get(this, "camera_password", ""));\n            ConfigStore.put(this, "camera_status", pr.ok ? "ONLINE" : "OFFLINE");\n            ConfigStore.put(this, "camera_probe_message", pr.message);\n            ConfigStore.putLong(this, "last_camera_probe", System.currentTimeMillis());\n            if (!pr.codec.isEmpty()) ConfigStore.put(this, "camera_codec", pr.codec);\n            return pr.message;\n        });\n    }\n'''
+          new='''    private void testCamera() {\n        saveCameraFields();\n        String rtsp = ConfigStore.get(this, "camera_rtsp", "");\n        if (rtsp.isEmpty()) { toast("Chưa có RTSP. Hãy Đồng bộ cấu hình từ Odoo trước."); return; }\n        toast("Kiểm tra Camera...");\n        io.submit(() -> {\n            RtspProbe.ProbeResult pr = RtspProbe.probe(rtsp, ConfigStore.get(this, "camera_user", ""), ConfigStore.get(this, "camera_password", ""));\n            ConfigStore.put(this, "camera_status", pr.ok ? "ONLINE" : "OFFLINE");\n            ConfigStore.put(this, "camera_probe_message", pr.message);\n            ConfigStore.putLong(this, "last_camera_probe", System.currentTimeMillis());\n            if (!pr.codec.isEmpty()) ConfigStore.put(this, "camera_codec", pr.codec);\n            runOnUiThread(() -> {\n                refreshStatus();\n                if (pr.status == 401) {\n                    showCameraCredentialDialog(true, pr.message);\n                } else {\n                    new AlertDialog.Builder(this).setTitle("Kiểm tra Camera").setMessage(pr.message).setPositiveButton("Đóng", null).show();\n                }\n            });\n        });\n    }\n'''
+          if old not in s:
+              raise SystemExit('testCamera anchor not found')
+          s=s.replace(old,new)
+
+          old='''    private void saveFields() {\n        if (server == null) return;\n        ConfigStore.saveConnection(this, serverText(), dbText(), agentText(), enrollmentCode.getText().toString(), autoStart.isChecked());\n    }\n'''
+          new='''    private void saveFields() {\n        if (server == null) return;\n        ConfigStore.saveConnection(this, serverText(), dbText(), agentText(), enrollmentCode.getText().toString(), autoStart.isChecked());\n        saveCameraFields();\n    }\n\n    private void saveCameraFields() {\n        if (cameraUser == null || cameraPassword == null) return;\n        String rtsp = ConfigStore.get(this, "camera_rtsp", "");\n        String code = ConfigStore.get(this, "camera_code", "ANDROID-CAMERA");\n        ConfigStore.saveCamera(this, code, rtsp, cameraUser.getText().toString().trim(), cameraPassword.getText().toString(), ConfigStore.get(this, "camera_codec", ""));\n        String u = cameraUser.getText().toString().trim();\n        String pw = cameraPassword.getText().toString();\n        ConfigStore.put(this, "camera_credential_source", (u.isEmpty() && pw.isEmpty()) ? "THIẾU" : "CỤC BỘ");\n    }\n\n    private void showCameraCredentialDialog(boolean retryAfterSave, String reason) {\n        LinearLayout l = dialogLayout();\n        EditText user = edit(ConfigStore.get(this, "camera_user", ""), "Tài khoản camera", false);\n        EditText pass = edit(ConfigStore.get(this, "camera_password", ""), "Mật khẩu camera", true);\n        l.addView(label("Tài khoản Camera")); l.addView(user);\n        l.addView(label("Mật khẩu Camera")); l.addView(pass);\n        AlertDialog d = new AlertDialog.Builder(this)\n                .setTitle("Xác thực Camera")\n                .setMessage((reason == null || reason.isEmpty() ? "Camera yêu cầu xác thực." : reason) + "\\nNhập tài khoản/mật khẩu rồi lưu để thử lại.")\n                .setView(l)\n                .setNegativeButton("Hủy", null)\n                .setPositiveButton("Lưu & thử lại", null)\n                .create();\n        d.setOnShowListener(x -> d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {\n            String u = user.getText().toString().trim();\n            String pw = pass.getText().toString();\n            if (u.isEmpty()) { user.setError("Nhập tài khoản Camera"); return; }\n            if (pw.isEmpty()) { pass.setError("Nhập mật khẩu Camera"); return; }\n            ConfigStore.saveCamera(this, ConfigStore.get(this, "camera_code", "ANDROID-CAMERA"), ConfigStore.get(this, "camera_rtsp", ""), u, pw, ConfigStore.get(this, "camera_codec", ""));\n            ConfigStore.put(this, "camera_credential_source", "CỤC BỘ");\n            if (cameraUser != null) cameraUser.setText(u);\n            if (cameraPassword != null) cameraPassword.setText(pw);\n            d.dismiss();\n            refreshStatus();\n            if (retryAfterSave) testCamera();\n        }));\n        d.show();\n    }\n'''
+          if old not in s:
+              raise SystemExit('saveFields anchor not found')
+          s=s.replace(old,new)
+
+          # Track whether sync delivered credentials and preserve local credentials if Odoo omits them.
+          s=s.replace('''                String u = cr.cameraUser.isEmpty() ? ConfigStore.get(this, "camera_user", "") : cr.cameraUser;\n                String p = cr.cameraPassword.isEmpty() ? ConfigStore.get(this, "camera_password", "") : cr.cameraPassword;\n                ConfigStore.saveCamera(this, cr.cameraCode, cr.rtspUrl, u, p, ConfigStore.get(this, "camera_codec", ""));''',
+                      '''                String u = cr.cameraUser.isEmpty() ? ConfigStore.get(this, "camera_user", "") : cr.cameraUser;\n                String p = cr.cameraPassword.isEmpty() ? ConfigStore.get(this, "camera_password", "") : cr.cameraPassword;\n                ConfigStore.saveCamera(this, cr.cameraCode, cr.rtspUrl, u, p, ConfigStore.get(this, "camera_codec", ""));\n                if (!cr.cameraUser.isEmpty() || !cr.cameraPassword.isEmpty()) ConfigStore.put(this, "camera_credential_source", "ODOO");\n                else if (!u.isEmpty() || !p.isEmpty()) ConfigStore.put(this, "camera_credential_source", "CỤC BỘ");\n                else ConfigStore.put(this, "camera_credential_source", "THIẾU");''')
+
+          # refresh visible credential fields only when user is not editing them
+          old='''        String codec = ConfigStore.get(this, "camera_codec", "");\n        cameraInfo.setText("Camera: " + (code.isEmpty() ? "Chưa nhận từ Odoo" : code) + "\\nRTSP: " + redactRtsp(rtsp) + (codec.isEmpty() ? "" : "\\nCodec: " + codec));\n'''
+          new='''        String codec = ConfigStore.get(this, "camera_codec", "");\n        String credSource = ConfigStore.get(this, "camera_credential_source", "THIẾU");\n        String configuredUser = ConfigStore.get(this, "camera_user", "");\n        cameraInfo.setText("Camera: " + (code.isEmpty() ? "Chưa nhận từ Odoo" : code) + "\\nRTSP: " + redactRtsp(rtsp) + "\\nCredential: " + credSource + (configuredUser.isEmpty() ? "" : " · User: " + configuredUser) + (codec.isEmpty() ? "" : "\\nCodec: " + codec));\n        if (cameraUser != null && !cameraUser.hasFocus()) cameraUser.setText(configuredUser);\n        if (cameraPassword != null && !cameraPassword.hasFocus()) cameraPassword.setText(ConfigStore.get(this, "camera_password", ""));\n'''
+          if old not in s:
+              raise SystemExit('refreshStatus anchor not found')
+          s=s.replace(old,new)
+
+          p.write_text(s)
+          PY
+
+      - name: Download Gradle
+        run: |
+          curl -fsSL --retry 3 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+
+      - name: Build APK
+        run: |
+          cd "$GITHUB_WORKSPACE/lpr-android-agent-022"
+          /tmp/gradle-8.11.1/bin/gradle --no-daemon :app:assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX.apk"
+
+      - name: Validate APK
+        run: |
+          APK="$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee "$GITHUB_WORKSPACE/APK_0.2.3_SIGNATURE.txt"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee "$GITHUB_WORKSPACE/APK_0.2.3_METADATA.txt"
+          grep "package: name='vn.vhb.lpr.edge'" "$GITHUB_WORKSPACE/APK_0.2.3_METADATA.txt"
+          grep "versionName='0.2.3-TVBOX'" "$GITHUB_WORKSPACE/APK_0.2.3_METADATA.txt"
+          grep "sdkVersion:'21'" "$GITHUB_WORKSPACE/APK_0.2.3_METADATA.txt"
+          grep "targetSdkVersion:'27'" "$GITHUB_WORKSPACE/APK_0.2.3_METADATA.txt"
+          sha256sum "$APK" | tee "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX.sha256"
+
+      - name: Package source
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          zip -qr VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX_Source.zip lpr-android-agent-022 -x '*/build/*' '*/.gradle/*'
+          sha256sum VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX_Source.zip > VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX_Source.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VHB-LPR-Android-Edge-Agent-0.2.3-TVBOX
+          path: |
+            VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX.apk
+            VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX.sha256
+            VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX_Source.zip
+            VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX_Source.sha256
+            APK_0.2.3_METADATA.txt
+            APK_0.2.3_SIGNATURE.txt
+          retention-days: 7
+
+      - name: Publish test release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="vhb-lpr-agent-0.2.3-tvbox-test"
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+          gh release create "$TAG" \
+            "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX.apk" \
+            "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX.sha256" \
+            "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.3_TVBOX_Source.zip" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "VHB LPR Android Edge Agent 0.2.3 TV Box" \
+            --notes "Fix camera credential UX: normal users can enter camera username/password, Odoo credentials are preferred when supplied, local credentials persist when omitted by Odoo, RTSP 401 opens credential prompt, expanded credential key compatibility. Android 5.0+." \
+            --prerelease
