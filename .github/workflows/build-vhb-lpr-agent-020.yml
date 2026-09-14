@@ -1,0 +1,423 @@
+name: Build VHB LPR Android Edge Agent 0.2.0
+on:
+  push:
+    branches: [ vhb-lpr-agent-apk-020 ]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Create VHB LPR project
+        run: |
+          set -e
+          ROOT="$GITHUB_WORKSPACE/vhb-lpr-agent"
+          mkdir -p "$ROOT/app/src/main/java/vn/vhb/lpr/edge" "$ROOT/app/src/main/res/values"
+
+          cat > "$ROOT/settings.gradle.kts" <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name = "VHB-LPR-Android-Edge-Agent"
+          include(":app")
+          EOF
+
+          cat > "$ROOT/build.gradle.kts" <<'EOF'
+          plugins {
+              id("com.android.application") version "8.9.2" apply false
+          }
+          EOF
+
+          cat > "$ROOT/gradle.properties" <<'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          EOF
+
+          cat > "$ROOT/app/build.gradle.kts" <<'EOF'
+          plugins { id("com.android.application") }
+          android {
+              namespace = "vn.vhb.lpr.edge"
+              compileSdk = 35
+              defaultConfig {
+                  applicationId = "vn.vhb.lpr.edge"
+                  minSdk = 29
+                  targetSdk = 35
+                  versionCode = 20
+                  versionName = "0.2.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              buildTypes {
+                  getByName("debug") { isMinifyEnabled = false }
+              }
+          }
+          EOF
+
+          cat > "$ROOT/app/src/main/res/values/strings.xml" <<'EOF'
+          <resources>
+              <string name="app_name">VHB LPR Edge Agent</string>
+          </resources>
+          EOF
+
+          cat > "$ROOT/app/src/main/res/values/styles.xml" <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowLightStatusBar">true</item>
+                  <item name="android:navigationBarColor">#FFFFFF</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > "$ROOT/app/src/main/AndroidManifest.xml" <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+              <application
+                  android:allowBackup="false"
+                  android:label="VHB LPR Edge Agent"
+                  android:theme="@style/AppTheme"
+                  android:usesCleartextTraffic="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:screenOrientation="portrait">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".AgentService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="VHB LPR edge agent continuously monitors configured camera/server connectivity and synchronizes device status." />
+                  </service>
+                  <receiver
+                      android:name=".BootReceiver"
+                      android:enabled="true"
+                      android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                      </intent-filter>
+                  </receiver>
+              </application>
+          </manifest>
+          EOF
+
+          cat > "$ROOT/app/src/main/java/vn/vhb/lpr/edge/AuthManager.java" <<'EOF'
+          package vn.vhb.lpr.edge;
+
+          import android.content.Context;
+          import android.content.SharedPreferences;
+          import java.nio.charset.StandardCharsets;
+          import java.security.MessageDigest;
+
+          public final class AuthManager {
+              private static final String PREF = "vhb_lpr_secure";
+              private static final String KEY_USER_HASH = "user_password_hash";
+              public static final String DEFAULT_USER_PASSWORD = "1234";
+              private static final String MANUFACTURER_PASSWORD = "2580";
+              private AuthManager() {}
+
+              private static SharedPreferences prefs(Context c) {
+                  return c.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+              }
+              public static void ensureDefault(Context c) {
+                  if (!prefs(c).contains(KEY_USER_HASH)) setUserPassword(c, DEFAULT_USER_PASSWORD);
+              }
+              public static boolean isManufacturer(String value) {
+                  return MANUFACTURER_PASSWORD.equals(value == null ? "" : value.trim());
+              }
+              public static boolean authenticate(Context c, String value) {
+                  ensureDefault(c);
+                  if (isManufacturer(value)) return true;
+                  return hash(value == null ? "" : value.trim()).equals(prefs(c).getString(KEY_USER_HASH, hash(DEFAULT_USER_PASSWORD)));
+              }
+              public static void setUserPassword(Context c, String value) {
+                  prefs(c).edit().putString(KEY_USER_HASH, hash(value)).apply();
+              }
+              public static void resetUserPassword(Context c) {
+                  setUserPassword(c, DEFAULT_USER_PASSWORD);
+              }
+              private static String hash(String text) {
+                  try {
+                      MessageDigest md = MessageDigest.getInstance("SHA-256");
+                      byte[] out = md.digest(text.getBytes(StandardCharsets.UTF_8));
+                      StringBuilder sb = new StringBuilder();
+                      for (byte b : out) sb.append(String.format("%02x", b));
+                      return sb.toString();
+                  } catch (Exception e) { throw new IllegalStateException(e); }
+              }
+          }
+          EOF
+
+          cat > "$ROOT/app/src/main/java/vn/vhb/lpr/edge/ConfigStore.java" <<'EOF'
+          package vn.vhb.lpr.edge;
+          import android.content.Context;
+          import android.content.SharedPreferences;
+
+          public final class ConfigStore {
+              private static final String PREF = "vhb_lpr_config";
+              private ConfigStore() {}
+              private static SharedPreferences p(Context c){ return c.getSharedPreferences(PREF, Context.MODE_PRIVATE); }
+              public static String get(Context c,String k,String d){ return p(c).getString(k,d); }
+              public static boolean getBool(Context c,String k,boolean d){ return p(c).getBoolean(k,d); }
+              public static void save(Context c,String server,String agent,String site,String rtsp,String camUser,String camPass,boolean auto){
+                  p(c).edit()
+                      .putString("server_url", server.trim())
+                      .putString("agent_id", agent.trim())
+                      .putString("site_id", site.trim())
+                      .putString("rtsp_url", rtsp.trim())
+                      .putString("camera_user", camUser.trim())
+                      .putString("camera_password", camPass)
+                      .putBoolean("auto_start", auto).apply();
+              }
+          }
+          EOF
+
+          cat > "$ROOT/app/src/main/java/vn/vhb/lpr/edge/BootReceiver.java" <<'EOF'
+          package vn.vhb.lpr.edge;
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.os.Build;
+
+          public class BootReceiver extends BroadcastReceiver {
+              @Override public void onReceive(Context context, Intent intent) {
+                  if (!ConfigStore.getBool(context,"auto_start",true)) return;
+                  Intent s = new Intent(context, AgentService.class);
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(s); else context.startService(s);
+              }
+          }
+          EOF
+
+          cat > "$ROOT/app/src/main/java/vn/vhb/lpr/edge/AgentService.java" <<'EOF'
+          package vn.vhb.lpr.edge;
+
+          import android.app.*;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.os.*;
+          import java.io.OutputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+          import java.nio.charset.StandardCharsets;
+          import java.util.concurrent.*;
+
+          public class AgentService extends Service {
+              private static final String CHANNEL = "vhb_lpr_agent";
+              private ScheduledExecutorService executor;
+              private PowerManager.WakeLock wakeLock;
+
+              @Override public void onCreate() {
+                  super.onCreate();
+                  createChannel();
+                  startForeground(2001, buildNotification("Đang khởi động Agent..."));
+                  PowerManager pm=(PowerManager)getSystemService(POWER_SERVICE);
+                  wakeLock=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"VHB:LPR_AGENT");
+                  wakeLock.acquire();
+                  executor=Executors.newSingleThreadScheduledExecutor();
+                  executor.scheduleWithFixedDelay(this::heartbeatSafe,2,30,TimeUnit.SECONDS);
+              }
+              @Override public int onStartCommand(Intent intent,int flags,int startId){ return START_STICKY; }
+              @Override public android.os.IBinder onBind(Intent intent){ return null; }
+              @Override public void onDestroy(){
+                  if(executor!=null) executor.shutdownNow();
+                  if(wakeLock!=null && wakeLock.isHeld()) wakeLock.release();
+                  super.onDestroy();
+              }
+              private void createChannel(){
+                  if(Build.VERSION.SDK_INT>=26){
+                      NotificationChannel ch=new NotificationChannel(CHANNEL,"VHB LPR Agent",NotificationManager.IMPORTANCE_LOW);
+                      ch.setDescription("Dịch vụ nền VHB LPR Edge Agent");
+                      getSystemService(NotificationManager.class).createNotificationChannel(ch);
+                  }
+              }
+              private Notification buildNotification(String text){
+                  Intent open=new Intent(this,MainActivity.class);
+                  PendingIntent pi=PendingIntent.getActivity(this,0,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+                  Notification.Builder b=Build.VERSION.SDK_INT>=26?new Notification.Builder(this,CHANNEL):new Notification.Builder(this);
+                  return b.setContentTitle("VHB LPR Edge Agent 0.2.0").setContentText(text).setSmallIcon(android.R.drawable.presence_video_online).setOngoing(true).setContentIntent(pi).build();
+              }
+              private void heartbeatSafe(){
+                  String server=ConfigStore.get(this,"server_url","");
+                  String agent=ConfigStore.get(this,"agent_id","VHB-ANDROID-001");
+                  if(server.isEmpty()){
+                      getSystemService(NotificationManager.class).notify(2001,buildNotification("Agent đang chạy · Chưa cấu hình Server"));
+                      return;
+                  }
+                  try{
+                      String endpoint=server.endsWith("/heartbeat")?server:trimSlash(server)+"/vhb_lpr/api/v1/heartbeat";
+                      URL url=new URL(endpoint);
+                      HttpURLConnection c=(HttpURLConnection)url.openConnection();
+                      c.setConnectTimeout(6000); c.setReadTimeout(6000); c.setRequestMethod("POST"); c.setDoOutput(true); c.setRequestProperty("Content-Type","application/json");
+                      String body="{\"schema\":\"lite_count_v1\",\"platform\":\"android\",\"agent_version\":\"0.2.0\",\"agent_id\":\""+escape(agent)+"\",\"site_id\":\""+escape(ConfigStore.get(this,"site_id",""))+"\",\"status\":\"online\"}";
+                      try(OutputStream os=c.getOutputStream()){ os.write(body.getBytes(StandardCharsets.UTF_8)); }
+                      int code=c.getResponseCode(); c.disconnect();
+                      getSystemService(NotificationManager.class).notify(2001,buildNotification("Agent "+agent+" · Server HTTP "+code));
+                  }catch(Exception e){
+                      getSystemService(NotificationManager.class).notify(2001,buildNotification("Agent "+agent+" · Mất kết nối Server"));
+                  }
+              }
+              private static String trimSlash(String s){ while(s.endsWith("/")) s=s.substring(0,s.length()-1); return s; }
+              private static String escape(String s){ return s.replace("\\","\\\\").replace("\"","\\\""); }
+          }
+          EOF
+
+          cat > "$ROOT/app/src/main/java/vn/vhb/lpr/edge/MainActivity.java" <<'EOF'
+          package vn.vhb.lpr.edge;
+
+          import android.app.*;
+          import android.content.*;
+          import android.graphics.Color;
+          import android.net.Uri;
+          import android.os.*;
+          import android.provider.Settings;
+          import android.text.InputType;
+          import android.view.*;
+          import android.widget.*;
+
+          public class MainActivity extends Activity {
+              private boolean authenticated=false, manufacturerMode=false, firstStart=true;
+              private EditText server,agent,site,rtsp,camUser,camPass;
+              private CheckBox autoStart;
+              private TextView roleText;
+
+              @Override public void onCreate(Bundle b){
+                  super.onCreate(b);
+                  AuthManager.ensureDefault(this);
+                  showLockedScreen();
+              }
+              @Override protected void onStart(){
+                  super.onStart();
+                  if(firstStart){ firstStart=false; showLogin(); }
+                  else if(!authenticated) showLogin();
+              }
+              @Override protected void onStop(){
+                  super.onStop();
+                  if(!isChangingConfigurations()) authenticated=false;
+              }
+              private void showLockedScreen(){
+                  LinearLayout l=new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); l.setGravity(Gravity.CENTER); l.setPadding(32,32,32,32);
+                  TextView t=new TextView(this); t.setText("VHB LPR EDGE AGENT\nCấu hình đang khóa"); t.setGravity(Gravity.CENTER); t.setTextSize(24); t.setTextColor(Color.rgb(25,45,70));
+                  l.addView(t,new LinearLayout.LayoutParams(-1,-2)); setContentView(l);
+              }
+              private void showLogin(){
+                  final EditText pass=new EditText(this); pass.setHint("Mật khẩu"); pass.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+                  pass.setSingleLine(true);
+                  AlertDialog d=new AlertDialog.Builder(this).setTitle("Đăng nhập cấu hình").setMessage("Nhập mật khẩu cấu hình VHB LPR Edge Agent").setView(pass)
+                      .setNegativeButton("Thoát",(x,w)->finish()).setPositiveButton("Đăng nhập",null).create();
+                  d.setOnShowListener(x->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+                      String p=pass.getText().toString();
+                      if(AuthManager.authenticate(this,p)){
+                          manufacturerMode=AuthManager.isManufacturer(p); authenticated=true; d.dismiss(); buildUi();
+                      }else{ pass.setError("Mật khẩu không đúng"); }
+                  })); d.setCanceledOnTouchOutside(false); d.show();
+              }
+              private TextView label(String s){ TextView t=new TextView(this); t.setText(s); t.setTextSize(14); t.setPadding(0,16,0,4); return t; }
+              private EditText edit(String value,String hint,boolean password){
+                  EditText e=new EditText(this); e.setText(value); e.setHint(hint); e.setSingleLine(true);
+                  if(password)e.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+                  return e;
+              }
+              private Button button(String text){ Button b=new Button(this); b.setText(text); return b; }
+              private void buildUi(){
+                  ScrollView sv=new ScrollView(this); LinearLayout root=new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(32,26,32,40); sv.addView(root);
+                  TextView title=new TextView(this); title.setText("VHB LPR EDGE AGENT"); title.setTextSize(25); title.setTextColor(Color.rgb(20,55,90)); root.addView(title);
+                  TextView ver=new TextView(this); ver.setText("Android Edge · Version 0.2.0"); ver.setTextSize(13); root.addView(ver);
+                  roleText=new TextView(this); roleText.setText(manufacturerMode?"Quyền: Kỹ thuật VHB / Nhà sản xuất":"Quyền: Người dùng cấu hình"); roleText.setPadding(0,8,0,14); root.addView(roleText);
+
+                  root.addView(label("Server VHB / Odoo URL")); server=edit(ConfigStore.get(this,"server_url",""),"https://server.example.com",false); root.addView(server);
+                  root.addView(label("Agent ID")); agent=edit(ConfigStore.get(this,"agent_id","VHB-ANDROID-001"),"VHB-ANDROID-001",false); root.addView(agent);
+                  root.addView(label("Site ID / Điểm triển khai")); site=edit(ConfigStore.get(this,"site_id",""),"SITE-HN-001",false); root.addView(site);
+                  root.addView(label("RTSP Camera Hikvision")); rtsp=edit(ConfigStore.get(this,"rtsp_url",""),"rtsp://192.168.1.64:554/Streaming/Channels/101",false); root.addView(rtsp);
+                  root.addView(label("Tài khoản Camera")); camUser=edit(ConfigStore.get(this,"camera_user",""),"admin",false); root.addView(camUser);
+                  root.addView(label("Mật khẩu Camera")); camPass=edit(ConfigStore.get(this,"camera_password",""),"Mật khẩu camera",true); root.addView(camPass);
+                  autoStart=new CheckBox(this); autoStart.setText("Tự khởi động Agent sau khi bật nguồn / reboot"); autoStart.setChecked(ConfigStore.getBool(this,"auto_start",true)); autoStart.setPadding(0,18,0,12); root.addView(autoStart);
+
+                  Button save=button("LƯU CẤU HÌNH & KHỞI ĐỘNG AGENT"); save.setOnClickListener(v->{ save(); startAgent(); Toast.makeText(this,"Đã lưu cấu hình",Toast.LENGTH_SHORT).show(); }); root.addView(save);
+                  Button stop=button("Dừng Agent"); stop.setOnClickListener(v->{ stopService(new Intent(this,AgentService.class)); Toast.makeText(this,"Đã dừng Agent",Toast.LENGTH_SHORT).show(); }); root.addView(stop);
+                  Button change=button("Đổi / Khôi phục mật khẩu cấu hình"); change.setOnClickListener(v->changePassword()); root.addView(change);
+                  if(manufacturerMode){ Button reset=button("Đặt lại mật khẩu khách về 1234"); reset.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Xác nhận").setMessage("Đặt lại mật khẩu người dùng về 1234?").setNegativeButton("Hủy",null).setPositiveButton("Đặt lại",(d,w)->{AuthManager.resetUserPassword(this);Toast.makeText(this,"Mật khẩu khách đã về 1234",Toast.LENGTH_LONG).show();}).show()); root.addView(reset); }
+                  Button battery=button("Mở cài đặt tối ưu pin cho Agent"); battery.setOnClickListener(v->openBattery()); root.addView(battery);
+                  Button lock=button("Khóa màn hình cấu hình"); lock.setOnClickListener(v->{ authenticated=false; manufacturerMode=false; showLockedScreen(); showLogin(); }); root.addView(lock);
+                  TextView note=new TextView(this); note.setText("Mật khẩu người dùng mặc định: 1234 (có thể thay đổi). Tài khoản kỹ thuật nhà sản xuất dùng để khôi phục khi khách quên mật khẩu. Agent chạy nền bằng Foreground Service và tự chạy sau BOOT_COMPLETED khi tùy chọn tự khởi động được bật."); note.setTextSize(12); note.setPadding(0,24,0,0); root.addView(note);
+                  setContentView(sv);
+                  if(autoStart.isChecked()) startAgent();
+              }
+              private void save(){ ConfigStore.save(this,server.getText().toString(),agent.getText().toString(),site.getText().toString(),rtsp.getText().toString(),camUser.getText().toString(),camPass.getText().toString(),autoStart.isChecked()); }
+              private void startAgent(){ Intent i=new Intent(this,AgentService.class); if(Build.VERSION.SDK_INT>=26) startForegroundService(i); else startService(i); }
+              private void changePassword(){
+                  LinearLayout l=new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); l.setPadding(40,10,40,0);
+                  EditText current=edit("","Mật khẩu hiện tại hoặc mã kỹ thuật",true); current.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+                  EditText n1=edit("","Mật khẩu mới (4-12 chữ số)",true); n1.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+                  EditText n2=edit("","Nhập lại mật khẩu mới",true); n2.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+                  l.addView(current);l.addView(n1);l.addView(n2);
+                  AlertDialog d=new AlertDialog.Builder(this).setTitle("Đổi / Khôi phục mật khẩu").setView(l).setNegativeButton("Hủy",null).setPositiveButton("Lưu",null).create();
+                  d.setOnShowListener(x->d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+                      String c=current.getText().toString(),a=n1.getText().toString(),b=n2.getText().toString();
+                      if(!AuthManager.authenticate(this,c)){current.setError("Mật khẩu hiện tại không đúng");return;}
+                      if(!a.matches("\\d{4,12}")){n1.setError("Chỉ dùng 4-12 chữ số");return;}
+                      if("2580".equals(a)){n1.setError("Không được trùng mã kỹ thuật VHB");return;}
+                      if(!a.equals(b)){n2.setError("Hai mật khẩu chưa khớp");return;}
+                      AuthManager.setUserPassword(this,a); d.dismiss(); Toast.makeText(this,"Đã đổi mật khẩu người dùng",Toast.LENGTH_LONG).show();
+                  })); d.show();
+              }
+              private void openBattery(){
+                  try{ Intent i=new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:"+getPackageName())); startActivity(i); }
+                  catch(Exception e){ startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+              }
+          }
+          EOF
+
+      - name: Download Gradle 8.11.1
+        run: |
+          curl -fsSL --retry 3 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+
+      - name: Build APK
+        run: |
+          cd "$GITHUB_WORKSPACE/vhb-lpr-agent"
+          /tmp/gradle-8.11.1/bin/gradle --no-daemon :app:assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.0.apk"
+
+      - name: Validate APK
+        run: |
+          APK="$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.0.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -30 | tee "$GITHUB_WORKSPACE/APK_METADATA.txt"
+          sha256sum "$APK" | tee "$GITHUB_WORKSPACE/VHB_LPR_Android_Edge_Agent_0.2.0.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VHB-LPR-Android-Edge-Agent-0.2.0-APK
+          path: |
+            VHB_LPR_Android_Edge_Agent_0.2.0.apk
+            VHB_LPR_Android_Edge_Agent_0.2.0.sha256
+            APK_METADATA.txt
+          if-no-files-found: error
+          retention-days: 7
