@@ -20,9 +20,23 @@ jobs:
           du -sh "$NDK/toolchains/llvm/prebuilt/linux-x86_64"
           tar -C "$NDK" -czf "$RUNNER_TEMP/ndk-llvm-linux-x86_64.tar.gz" toolchains/llvm/prebuilt/linux-x86_64
           ls -lh "$RUNNER_TEMP/ndk-llvm-linux-x86_64.tar.gz"
+          split -b 250m "$RUNNER_TEMP/ndk-llvm-linux-x86_64.tar.gz" "$RUNNER_TEMP/ndkpart."
+          ls -lh "$RUNNER_TEMP"/ndkpart.*
       - uses: actions/upload-artifact@v4
         with:
-          name: vhb-public-ndk-arm32-llvm-toolchain
-          path: ${{ runner.temp }}/ndk-llvm-linux-x86_64.tar.gz
+          name: vhb-public-ndk-arm32-part-aa
+          path: ${{ runner.temp }}/ndkpart.aa
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vhb-public-ndk-arm32-part-ab
+          path: ${{ runner.temp }}/ndkpart.ab
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vhb-public-ndk-arm32-part-ac
+          path: ${{ runner.temp }}/ndkpart.ac
           if-no-files-found: error
           retention-days: 1
