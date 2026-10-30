@@ -1,93 +1,28 @@
-name: Temporary Android 35 compiler toolchain export
+name: Export preinstalled public Android NDK ARM32 compiler for local build
 on:
   push:
     branches: [vhb-temp-android-toolchain-20261030]
 jobs:
-  export-sdk:
+  export-ndk:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-      - name: Download public Android build components
+      - name: Pack publicly available NDK toolchain (no user code)
         shell: bash
         run: |
           set -euxo pipefail
-          echo "SDK: $ANDROID_HOME"
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -1)"
-          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
-          gradle --version
-      - name: Resolve generic AGP and serial dependencies into an offline Gradle cache
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p "$RUNNER_TEMP/toolchain-generic/app/src/main/java/org/example/generic"
-          cd "$RUNNER_TEMP/toolchain-generic"
-          cat > settings.gradle <<'EOF'
-          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-          dependencyResolutionManagement {
-            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-            repositories { google(); mavenCentral(); maven { url 'https://jitpack.io' } }
-          }
-          rootProject.name = 'toolchain-cache-only'
-          include ':app'
-          EOF
-          cat > build.gradle <<'EOF'
-          plugins { id 'com.android.application' version '8.7.3' apply false }
-          EOF
-          cat > app/build.gradle <<'EOF'
-          plugins { id 'com.android.application' }
-          android {
-            namespace 'org.example.generic'
-            compileSdk 35
-            defaultConfig { applicationId 'org.example.generic'; minSdk 26; targetSdk 35; versionCode 1; versionName '1.0' }
-            compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
-          }
-          dependencies { implementation 'com.github.mik3y:usb-serial-for-android:3.11.0' }
-          EOF
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:label="Generic Toolchain"/></manifest>
-          EOF
-          cat > app/src/main/java/org/example/generic/Generic.java <<'EOF'
-          package org.example.generic;
-          public class Generic { public static int hello() { return 123; } }
-          EOF
-          printf 'android.useAndroidX=true\n' > gradle.properties
-          gradle --no-daemon --stacktrace clean :app:assembleDebug
-      - name: Package compiler bundles (no VHB source)
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p "$RUNNER_TEMP/pkg/sdk/build-tools" "$RUNNER_TEMP/pkg/sdk/platforms" "$RUNNER_TEMP/pkg/sdk/licenses"
-          cp -a "$ANDROID_HOME/build-tools/35.0.0" "$RUNNER_TEMP/pkg/sdk/build-tools/"
-          cp -a "$ANDROID_HOME/platforms/android-35" "$RUNNER_TEMP/pkg/sdk/platforms/"
-          cp -a "$ANDROID_HOME/platform-tools" "$RUNNER_TEMP/pkg/sdk/"
-          cp -a "$ANDROID_HOME/licenses/." "$RUNNER_TEMP/pkg/sdk/licenses/" || true
-          tar -C "$RUNNER_TEMP/pkg" -czf "$RUNNER_TEMP/android-sdk-minimal.tar.gz" sdk
-          GRADLE_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v gradle)")")")"
-          tar -C "$(dirname "$GRADLE_HOME")" -czf "$RUNNER_TEMP/gradle-8.9.tar.gz" "$(basename "$GRADLE_HOME")"
-          tar -C "$HOME" -czf "$RUNNER_TEMP/gradle-cache.tar.gz" .gradle/caches
-          ls -lh "$RUNNER_TEMP"/*.tar.gz
+          ls -lah "$ANDROID_HOME/ndk"
+          NDK="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          test -n "$NDK"
+          test -f "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          du -sh "$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          tar -C "$NDK" -czf "$RUNNER_TEMP/ndk-llvm-linux-x86_64.tar.gz" toolchains/llvm/prebuilt/linux-x86_64
+          ls -lh "$RUNNER_TEMP/ndk-llvm-linux-x86_64.tar.gz"
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: vhb-public-android-sdk-35-tools
-          path: ${{ runner.temp }}/android-sdk-minimal.tar.gz
-          if-no-files-found: warn
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: vhb-public-gradle89-offline-tools
-          path: |
-            ${{ runner.temp }}/gradle-8.9.tar.gz
-            ${{ runner.temp }}/gradle-cache.tar.gz
-          if-no-files-found: warn
+          name: vhb-public-ndk-arm32-llvm-toolchain
+          path: ${{ runner.temp }}/ndk-llvm-linux-x86_64.tar.gz
+          if-no-files-found: error
           retention-days: 1
