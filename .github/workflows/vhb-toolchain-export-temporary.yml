@@ -59,6 +59,7 @@ jobs:
           package org.example.generic;
           public class Generic { public static int hello() { return 123; } }
           EOF
+          printf 'android.useAndroidX=true\n' > gradle.properties
           gradle --no-daemon --stacktrace clean :app:assembleDebug
       - name: Package compiler bundles (no VHB source)
         shell: bash
