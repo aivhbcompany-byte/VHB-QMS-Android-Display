@@ -16,12 +16,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - uses: android-actions/setup-android@v3
       - name: Download public Android build components
         shell: bash
         run: |
           set -euxo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
+          echo "SDK: $ANDROID_HOME"
           sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
           gradle --version
       - name: Resolve generic AGP and serial dependencies into an offline Gradle cache
