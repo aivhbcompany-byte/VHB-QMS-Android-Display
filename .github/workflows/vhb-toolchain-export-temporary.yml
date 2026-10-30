@@ -21,7 +21,8 @@ jobs:
         run: |
           set -euxo pipefail
           echo "SDK: $ANDROID_HOME"
-          sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -1)"
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
           gradle --version
       - name: Resolve generic AGP and serial dependencies into an offline Gradle cache
         shell: bash
